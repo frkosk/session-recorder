@@ -130,8 +130,8 @@ app.post('/i/:site', rateLimit, express.text({ type: function () { return true; 
   var conf = SITES[req.params.site];
   if (!conf) return res.status(204).end();                 // neznámy site -> ticho zahoď
   var origin = req.headers.origin;
-  if (conf.origins.length && origin && conf.origins.indexOf(origin) === -1) {
-    return res.status(204).end();                          // origin mimo allowlistu
+  if (!origin || conf.origins.indexOf(origin) === -1) {
+    return res.status(204).end();                          // chýba origin alebo mimo allowlistu
   }
   var body;
   try { body = JSON.parse(req.body); } catch (e) { return res.status(204).end(); }
