@@ -42,13 +42,26 @@
     var body = JSON.stringify(data);
     try {
       // text/plain -> "simple request", nevyvolá CORS preflight
-      if (beacon && navigator.sendBeacon) {
-        navigator.sendBeacon(C.endpoint, new Blob([body], { type: 'text/plain' }));
+      if (beacon) {
+        // Užívateľ zatvára kartu — sendBeacon prežije unload.
+        // Fallback: fetch s keepalive (má 64 KB limit, prijateľné iba na
+        // posledný "farewell" batch, ktorý zvyčajne obsahuje pár mouse eventov).
+        var sent = navigator.sendBeacon && navigator.sendBeacon(C.endpoint, new Blob([body], { type: 'text/plain' }));
+        if (!sent) {
+          fetch(C.endpoint, {
+            method: 'POST', body: body,
+            headers: { 'Content-Type': 'text/plain' },
+            keepalive: true, mode: 'cors', credentials: 'omit'
+          }).catch(function () {});
+        }
       } else {
+        // Bežný flush — BEZ keepalive, aby fetch nemal 64 KB limit.
+        // FullSnapshot pri strede e-shopu je typicky 50–500 KB; s keepalive
+        // by request "visel" v pending stave a batch by nikdy nedorazil.
         fetch(C.endpoint, {
           method: 'POST', body: body,
           headers: { 'Content-Type': 'text/plain' },
-          keepalive: true, mode: 'cors', credentials: 'omit'
+          mode: 'cors', credentials: 'omit'
         }).catch(function () {});
       }
     } catch (e) {}
