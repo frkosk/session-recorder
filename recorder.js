@@ -20,7 +20,7 @@
   var FLUSH_MS = C.flushMs || 5000;      // ako často posielať dávku
   var MAX_BUF = C.maxBuffer || 200;      // po koľkých eventoch poslať hneď
 
-  var buf = [], stopFn = null, started = false, sid = null, timer = null;
+  var buf = [], stopFn = null, started = false, sid = null, timer = null, firstFlushDone = false;
 
   function uuid() {
     return 'xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
@@ -65,7 +65,15 @@
     stopFn = window.rrweb.record({
       emit: function (ev) {
         buf.push(ev);
-        if (buf.length >= MAX_BUF) flush(false);
+        // Prvý flush spravíme okamžite (do 100 ms) — chceme dostať Meta + FullSnapshot
+        // na server hneď na začiatku, nie až po 5 s alebo pri buffer overflow.
+        // Bez baseline FullSnapshot je session neprehratelná.
+        if (!firstFlushDone) {
+          firstFlushDone = true;
+          setTimeout(function () { flush(false); }, 100);
+        } else if (buf.length >= MAX_BUF) {
+          flush(false);
+        }
       },
       packFn: window.rrweb.pack,      // komprimácia každého eventu
       maskAllInputs: true,            // KĽÚČOVÉ: maskuje všetky vstupy
@@ -75,6 +83,10 @@
       blockSelector: C.blockSelector || null,
       recordCanvas: false,
       collectFonts: false,
+      // Nový FullSnapshot každých 30 s — poistka pre prípad, že prvá dávka
+      // (obsahujúca iniciálny FullSnapshot) sa nedostala na server.
+      // Bez baseline snapshotu nedokáže rrweb-player zrekonštruovať DOM.
+      checkoutEveryNms: 30000,
       sampling: { mousemove: 50, scroll: 150, media: 800, input: 'last' }
     });
 
