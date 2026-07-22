@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session recorder</title>
+<link rel="stylesheet" href="https://cdn.rrweb.com/rrweb-player/current/style.css">
+<style>
+  :root { --bg:#f6f6f4; --card:#fff; --ink:#1f1f1d; --muted:#6b6b66; --line:#e3e2dc; --accent:#1d6e56; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui, sans-serif; color:var(--ink); background:var(--bg); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); background:var(--card); }
+  header h1 { margin:0; font-size:16px; font-weight:600; }
+  .wrap { display:grid; grid-template-columns:320px 1fr; height:calc(100vh - 51px); }
+  .list { border-right:1px solid var(--line); overflow:auto; background:var(--card); }
+  .item { padding:11px 16px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .item:hover { background:var(--bg); }
+  .item.active { background:#e8f2ee; border-left:3px solid var(--accent); padding-left:13px; }
+  .item .u { font-size:13px; color:var(--ink); word-break:break-all; }
+  .item .m { font-size:12px; color:var(--muted); margin-top:3px; }
+  .main { overflow:auto; padding:20px; display:flex; align-items:flex-start; justify-content:center; }
+  .empty { color:var(--muted); margin-top:60px; }
+  .pill { display:inline-block; background:var(--bg); border:1px solid var(--line); border-radius:20px; padding:1px 8px; font-size:11px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header><h1>Session recorder — nahrávky</h1></header>
+<div class="wrap">
+  <div class="list" id="list"></div>
+  <div class="main" id="main"><div class="empty">Vyber reláciu vľavo.</div></div>
+</div>
+
+<script type="module">
+import rrwebPlayer from 'https://cdn.rrweb.com/rrweb-player/current/rrweb-player.js';
+import { unpack } from 'https://cdn.rrweb.com/all/current/all.js';
+
+const listEl = document.getElementById('list');
+const mainEl = document.getElementById('main');
+let player = null;
+
+function fmtDate(ms) {
+  return new Date(ms).toLocaleString('sk-SK');
+}
+function fmtDur(ms) {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  return m + 'm ' + (s % 60) + 's';
+}
+
+async function loadList() {
+  const rows = await fetch('/api/sessions').then(r => r.json());
+  if (!rows.length) { listEl.innerHTML = '<div class="empty" style="padding:16px">Zatiaľ žiadne relácie.</div>'; return; }
+  listEl.innerHTML = '';
+  rows.forEach(function (s) {
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML =
+      '<div class="u">' + (s.url || '(bez URL)') + '</div>' +
+      '<div class="m">' + fmtDate(s.last_seen) + ' · <span class="pill">' + fmtDur(s.dur) + '</span> · ' +
+      s.n + ' eventov · ' + s.site + '</div>';
+    div.onclick = function () {
+      document.querySelectorAll('.item').forEach(function (x) { x.classList.remove('active'); });
+      div.classList.add('active');
+      play(s.site, s.id);
+    };
+    listEl.appendChild(div);
+  });
+}
+
+async function play(site, id) {
+  mainEl.innerHTML = '<div class="empty">Načítavam…</div>';
+  const raw = await fetch('/api/sessions/' + encodeURIComponent(site) + '/' + encodeURIComponent(id)).then(r => r.json());
+  let events;
+  try { events = raw.events.map(unpack); } catch (e) { events = raw.events; }
+  if (!events || events.length < 2) { mainEl.innerHTML = '<div class="empty">Relácia je príliš krátka na prehratie.</div>'; return; }
+  mainEl.innerHTML = '';
+  const box = document.createElement('div');
+  mainEl.appendChild(box);
+  if (player) { try { player.$destroy && player.$destroy(); } catch (e) {} }
+  player = new rrwebPlayer({
+    target: box,
+    props: {
+      events: events,
+      width: Math.min(1000, mainEl.clientWidth - 40),
+      height: 540,
+      autoPlay: false,
+      showController: true
+    }
+  });
+}
+
+loadList();
+</script>
+</body>
+</html>

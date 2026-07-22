@@ -1,0 +1,14 @@
+node_modules/
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+.git
+.gitignore
+.DS_Store
+*.log
+README.md
+PROJECT.md
+LICENSE
