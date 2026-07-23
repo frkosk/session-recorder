@@ -70,7 +70,16 @@
   function flush(beacon) {
     if (!buf.length) return;
     var batch = buf; buf = [];
-    post({ sid: sid, url: location.href, events: batch }, beacon);
+    var payload = { sid: sid, url: location.href, events: batch };
+    // Referrer posielaj iba raz per session (across page navigations). sessionStorage flag zaručí,
+    // že po prechode na ďalšiu PS stránku sa nepošle referrer tej stránky, ale iba entry-page referrer.
+    try {
+      if (!sessionStorage.getItem('__rec_ref_sent')) {
+        payload.referrer = document.referrer || '';
+        sessionStorage.setItem('__rec_ref_sent', '1');
+      }
+    } catch (e) {}
+    post(payload, beacon);
   }
 
   function begin() {
