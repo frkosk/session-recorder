@@ -118,10 +118,8 @@ function shortUrl(u, max) {
   catch (e) { return u.length > max ? u.slice(0, max) + '…' : u; }
 }
 async function copyToClipboard(text) {
-  try { await navigator.clipboard.writeText(text); dbg('copied: ' + text.slice(0, 30)); }
-  catch (e) { dbg('copy failed: ' + e.message); }
+  try { await navigator.clipboard.writeText(text); } catch (e) { console.warn('copy failed', e); }
 }
-window.__copySid = function (sid) { copyToClipboard(sid); };
 
 function renderDetail(s, summary) {
   const meta = summary.meta;
@@ -169,12 +167,24 @@ function renderDetail(s, summary) {
 
       <h4>Meta</h4>
       <div class="row"><span class="k">Playable</span><span class="v">${playable}</span></div>
-      <div class="row"><span class="k">Session ID</span><span class="v"><span class="copy" onclick="window.__copySid('${esc(meta.id)}')">${esc(meta.id.slice(0, 12))}…</span></span></div>
+      <div class="row"><span class="k">Session ID</span><span class="v"><span class="copy" data-sid="${esc(meta.id)}" title="Copy full ID">${esc(meta.id.slice(0, 12))}…</span></span></div>
       <details><summary>UA raw</summary><pre>${esc(meta.ua)}</pre></details>
     </div>`;
 }
 
 const summaryCache = new Map();
+
+// Delegated click: copy tlačidlá vnútri detail panelov
+listEl.addEventListener('click', function (e) {
+  const c = e.target && e.target.closest && e.target.closest('.copy');
+  if (c && c.dataset.sid) {
+    e.stopPropagation(); // nespúšťaj play(session)
+    copyToClipboard(c.dataset.sid);
+    const orig = c.textContent;
+    c.textContent = 'skopírované';
+    setTimeout(function () { c.textContent = orig; }, 1000);
+  }
+});
 
 async function loadSummary(site, id) {
   const key = site + '/' + id;
@@ -221,21 +231,6 @@ function showError(msg, detail) {
     (detail ? '<pre style="background:#fdd;padding:10px;overflow:auto;font-size:12px">' + String(detail).replace(/[<>]/g,'') + '</pre>' : '') + '</div>';
 }
 
-// Debug bar — vidno stav bez otvárania Console
-const dbgBar = document.createElement('div');
-dbgBar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#222;color:#0f0;font:11px monospace;padding:4px 12px;z-index:9999;white-space:pre;overflow:auto;max-height:48px;opacity:0.85';
-dbgBar.textContent = '[viewer] pripravený';
-document.body.appendChild(dbgBar);
-function dbg(msg) {
-  const ts = new Date().toLocaleTimeString('sk-SK');
-  dbgBar.textContent = '[' + ts + '] ' + msg + '\n' + dbgBar.textContent.slice(0, 800);
-  console.log('[viewer]', msg);
-}
-window.addEventListener('error', function (e) { dbg('WINDOW ERROR: ' + (e.message || 'unknown')); });
-window.addEventListener('unhandledrejection', function (e) { dbg('PROMISE REJECT: ' + (e.reason && (e.reason.message || e.reason.toString()))); });
-
-dbg('modules: Replayer=' + typeof Replayer + ' unpack=' + typeof unpack);
-
 let resizeHandler = null;
 function tearDown() {
   if (uiTimer) { clearInterval(uiTimer); uiTimer = null; }
@@ -253,18 +248,14 @@ async function play(site, id) {
   } catch (e) { showError('fetch zlyhal', e.message); return; }
 
   const events = [];
-  const unpackErrors = [];
   const typeCounts = {};
   for (let i = 0; i < raw.events.length; i++) {
     try {
       const ev = unpack(raw.events[i]);
       events.push(ev);
       typeCounts[ev.type] = (typeCounts[ev.type] || 0) + 1;
-    } catch (e) {
-      unpackErrors.push({ i, msg: e.message });
-    }
+    } catch (e) { /* skip malformed */ }
   }
-  dbg('session ' + id.slice(0, 12) + '… raw=' + raw.events.length + ' ok=' + events.length + ' types=' + JSON.stringify(typeCounts));
 
   if (events.length < 2) { showError('Relácia je príliš krátka (' + events.length + ' použiteľných eventov).', JSON.stringify(typeCounts)); return; }
   if (!typeCounts[2]) { showError('Chýba FullSnapshot event (type=2). Player nemá odkiaľ začať.', JSON.stringify(typeCounts)); return; }
@@ -299,8 +290,6 @@ async function play(site, id) {
       if (baseOrigin) break;
     }
   }
-  dbg('viewport: ' + vpW + 'x' + vpH + ' base=' + baseOrigin);
-
   // Root-relative URL rewrite — /modules/... → https://origin/modules/...
   // Bez toho iframe fetch-uje resources z rec.kocurik.sk (404) namiesto pôvodnej domény.
   if (baseOrigin) {
@@ -327,28 +316,23 @@ async function play(site, id) {
       }
       if (n.childNodes) for (const c of n.childNodes) rewriteNode(c);
     }
-    let rewritten = 0;
     for (const ev of events) {
-      if (ev.type === 2 && ev.data && ev.data.node) { rewriteNode(ev.data.node); rewritten++; }
+      if (ev.type === 2 && ev.data && ev.data.node) rewriteNode(ev.data.node);
       // Incremental mutations tiež nesú nové nodes s URL atribútmi
       if (ev.type === 3 && ev.data && ev.data.source === 0 && Array.isArray(ev.data.adds)) {
         for (const add of ev.data.adds) if (add.node) rewriteNode(add.node);
       }
     }
-    dbg('rewrote URLs in ' + rewritten + ' FullSnapshot(s)');
   }
 
   try {
-    dbg('creating Replayer, events=' + events.length);
     replayer = new Replayer(events, {
       root: stage,
       skipInactive: true,
       showWarning: false,
       showDebug: false
     });
-    dbg('Replayer created, stage children=' + stage.children.length);
   } catch (e) {
-    dbg('REPLAYER THREW: ' + (e.message || e));
     showError('rrweb Replayer padol pri inicializácii.', e.stack || e.message);
     return;
   }
@@ -374,26 +358,19 @@ async function play(site, id) {
     }
     return { scale, scaledW, scaledH, availW, availH };
   }
-  const fit = applyFit();
-  dbg('fit: scale=' + fit.scale.toFixed(3) + ' → ' + fit.scaledW + 'x' + fit.scaledH + ' (avail ' + fit.availW + 'x' + fit.availH + ')');
+  applyFit();
 
   // Debounced resize — prepočíta fit pri zmene okna
   let resizeTimer = null;
   resizeHandler = function () {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(function () {
-      if (replayer) {
-        const f = applyFit();
-        dbg('resize → scale=' + f.scale.toFixed(3) + ' ' + f.scaledW + 'x' + f.scaledH);
-      }
-    }, 150);
+    resizeTimer = setTimeout(function () { if (replayer) applyFit(); }, 150);
   };
   window.addEventListener('resize', resizeHandler);
 
   // Meta + UI wiring
   const meta = replayer.getMetaData();
   const totalMs = meta.totalTime;
-  dbg('meta totalMs=' + totalMs + ' startTs=' + meta.startTime + ' endTs=' + meta.endTime);
 
   const ppBtn = controls.querySelector('#pp');
   const tmEl = controls.querySelector('#tm');

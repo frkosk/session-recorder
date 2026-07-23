@@ -97,22 +97,7 @@
           flush(false);
         }
       },
-      packFn: function (ev) {
-        // Debug: sleduj čo rrweb reálne emituje (v Console: window.__rec_debug)
-        try {
-          window.__rec_debug = window.__rec_debug || { types: {}, sources: {}, count: 0 };
-          window.__rec_debug.count++;
-          window.__rec_debug.types[ev.type] = (window.__rec_debug.types[ev.type] || 0) + 1;
-          if (ev.type === 3) {
-            var src = ev.data && ev.data.source;
-            window.__rec_debug.sources[src] = (window.__rec_debug.sources[src] || 0) + 1;
-          }
-          if (C.debug) {
-            console.debug('[rec] type=' + ev.type + (ev.type === 3 ? ' source=' + (ev.data && ev.data.source) : ''));
-          }
-        } catch (e) {}
-        return window.rrweb.pack(ev);
-      },
+      packFn: window.rrweb.pack,      // komprimácia každého eventu
       maskAllInputs: true,            // KĽÚČOVÉ: maskuje všetky vstupy
       maskTextClass: 'rr-mask',       // .rr-mask -> maskuje aj zobrazený text
       blockClass: 'rr-block',         // .rr-block -> element sa vôbec nenahrá
