@@ -153,16 +153,55 @@ async function play(site, id) {
   player.appendChild(controls);
   mainEl.appendChild(player);
 
-  // Zisti viewport z prvého Meta eventu (type 4)
-  let vpW = 1280, vpH = 720;
+  // Zisti viewport + origin z prvého Meta eventu (type 4)
+  let vpW = 1280, vpH = 720, baseOrigin = '';
   for (const ev of events) {
-    if (ev.type === 4 && ev.data && ev.data.width) {
-      vpW = ev.data.width;
-      vpH = ev.data.height;
-      break;
+    if (ev.type === 4 && ev.data) {
+      if (ev.data.width) { vpW = ev.data.width; vpH = ev.data.height; }
+      if (ev.data.href && !baseOrigin) {
+        try { baseOrigin = new URL(ev.data.href).origin; } catch (e) {}
+      }
+      if (baseOrigin) break;
     }
   }
-  dbg('viewport: ' + vpW + 'x' + vpH);
+  dbg('viewport: ' + vpW + 'x' + vpH + ' base=' + baseOrigin);
+
+  // Root-relative URL rewrite — /modules/... → https://origin/modules/...
+  // Bez toho iframe fetch-uje resources z rec.kocurik.sk (404) namiesto pôvodnej domény.
+  if (baseOrigin) {
+    const URL_ATTRS = ['src', 'href', 'data-src', 'poster', 'action'];
+    function rewriteSrcset(v) {
+      return v.split(',').map(part => {
+        const t = part.trim();
+        const sp = t.indexOf(' ');
+        const url = sp === -1 ? t : t.slice(0, sp);
+        const rest = sp === -1 ? '' : t.slice(sp);
+        if (url.startsWith('/') && !url.startsWith('//')) return baseOrigin + url + rest;
+        return t;
+      }).join(', ');
+    }
+    function rewriteNode(n) {
+      if (!n || typeof n !== 'object') return;
+      const a = n.attributes;
+      if (a) {
+        for (const k of URL_ATTRS) {
+          const v = a[k];
+          if (typeof v === 'string' && v.startsWith('/') && !v.startsWith('//')) a[k] = baseOrigin + v;
+        }
+        if (typeof a.srcset === 'string') a.srcset = rewriteSrcset(a.srcset);
+      }
+      if (n.childNodes) for (const c of n.childNodes) rewriteNode(c);
+    }
+    let rewritten = 0;
+    for (const ev of events) {
+      if (ev.type === 2 && ev.data && ev.data.node) { rewriteNode(ev.data.node); rewritten++; }
+      // Incremental mutations tiež nesú nové nodes s URL atribútmi
+      if (ev.type === 3 && ev.data && ev.data.source === 0 && Array.isArray(ev.data.adds)) {
+        for (const add of ev.data.adds) if (add.node) rewriteNode(add.node);
+      }
+    }
+    dbg('rewrote URLs in ' + rewritten + ' FullSnapshot(s)');
+  }
 
   try {
     dbg('creating Replayer, events=' + events.length);
