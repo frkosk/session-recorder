@@ -239,6 +239,18 @@ async function play(site, id) {
     dbg('WARN: .replayer-wrapper not found — scale not applied');
   }
 
+  // Diagnostika reálnych pozícií (po 500 ms, aby rrweb stihol nasetovať iframe rozmery)
+  setTimeout(function () {
+    const st = stage.getBoundingClientRect();
+    const w = stage.querySelector('.replayer-wrapper');
+    const wr = w && w.getBoundingClientRect();
+    const ifr = w && w.querySelector('iframe');
+    const ir = ifr && ifr.getBoundingClientRect();
+    dbg('stage@' + Math.round(st.left) + ',' + Math.round(st.top) + ' ' + Math.round(st.width) + 'x' + Math.round(st.height));
+    if (wr) dbg('wrapper@' + Math.round(wr.left) + ',' + Math.round(wr.top) + ' ' + Math.round(wr.width) + 'x' + Math.round(wr.height) + ' transform=' + w.style.transform);
+    if (ir) dbg('iframe@' + Math.round(ir.left) + ',' + Math.round(ir.top) + ' ' + Math.round(ir.width) + 'x' + Math.round(ir.height) + ' attr=' + ifr.getAttribute('width') + 'x' + ifr.getAttribute('height'));
+  }, 500);
+
   // Meta + UI wiring
   const meta = replayer.getMetaData();
   const totalMs = meta.totalTime;
