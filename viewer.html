@@ -17,7 +17,25 @@
   .item.active { background:#e8f2ee; border-left:3px solid var(--accent); padding-left:13px; }
   .item .u { font-size:13px; color:var(--ink); word-break:break-all; }
   .item .m { font-size:12px; color:var(--muted); margin-top:3px; }
-  .main { overflow:auto; padding:20px 20px 140px; display:flex; align-items:flex-start; justify-content:center; }
+
+  /* Rozbalená karta s metadátami session — visible len keď .item.active */
+  .item .detail { display:none; margin-top:10px; padding-top:10px; border-top:1px dashed var(--line); font-size:12px; color:var(--ink); }
+  .item.active .detail { display:block; }
+  .detail .row { display:flex; justify-content:space-between; gap:8px; padding:2px 0; }
+  .detail .row .k { color:var(--muted); flex:0 0 auto; }
+  .detail .row .v { text-align:right; word-break:break-all; }
+  .detail .badge { display:inline-block; background:var(--bg); border:1px solid var(--line); padding:0 6px; border-radius:3px; font-size:11px; }
+  .detail .badge.ok { background:#e8f2ee; border-color:#b6d9c9; color:#1d6e56; }
+  .detail .badge.warn { background:#fbeee1; border-color:#e6c9a3; color:#8a5b1e; }
+  .detail .badge.err { background:#fbdcdc; border-color:#e6a3a3; color:#8a1e1e; }
+  .detail h4 { margin:10px 0 4px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); }
+  .detail .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:2px 12px; }
+  .detail .url-list { max-height:60px; overflow:auto; padding-left:12px; margin:2px 0; font-size:11px; line-height:1.4; }
+  .detail .copy { cursor:pointer; color:var(--accent); text-decoration:underline; font-size:11px; }
+  .detail details { margin-top:6px; font-size:11px; }
+  .detail details summary { cursor:pointer; color:var(--muted); }
+  .detail details pre { background:var(--bg); padding:6px; border-radius:3px; white-space:pre-wrap; word-break:break-all; margin:4px 0 0; font-size:10px; max-height:100px; overflow:auto; }
+  .main { padding:16px; display:flex; align-items:center; justify-content:center; overflow:hidden; }
   .empty { color:var(--muted); margin-top:60px; }
   .pill { display:inline-block; background:var(--bg); border:1px solid var(--line); border-radius:20px; padding:1px 8px; font-size:11px; color:var(--muted); }
   .player { background:var(--card); border:1px solid var(--line); border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,.05); overflow:hidden; }
@@ -61,6 +79,7 @@ let uiTimer = null;
 
 function fmtDate(ms) { return new Date(ms).toLocaleString('sk-SK'); }
 function fmtDur(ms) {
+  if (ms == null) return '—';
   const s = Math.round(ms / 1000);
   if (s < 60) return s + 's';
   const m = Math.floor(s / 60);
@@ -71,6 +90,100 @@ function fmtTime(ms) {
   const m = Math.floor(s / 60);
   return (m < 10 ? '0' : '') + m + ':' + ((s % 60) < 10 ? '0' : '') + (s % 60);
 }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// Minimalistický UA parser — bez závislostí, len na najbežnejšie kombinácie
+function parseUA(ua) {
+  if (!ua) return { browser: '—', os: '—', device: '—' };
+  const u = ua;
+  let browser = 'Other';
+  if (/Edg\//.test(u)) browser = 'Edge ' + (u.match(/Edg\/(\d+)/) || [])[1] || 'Edge';
+  else if (/Chrome\//.test(u) && !/Chromium/.test(u)) browser = 'Chrome ' + ((u.match(/Chrome\/(\d+)/) || [])[1] || '');
+  else if (/Firefox\//.test(u)) browser = 'Firefox ' + ((u.match(/Firefox\/(\d+)/) || [])[1] || '');
+  else if (/Safari\//.test(u) && /Version\//.test(u)) browser = 'Safari ' + ((u.match(/Version\/(\d+)/) || [])[1] || '');
+  let os = 'Other';
+  if (/Windows NT/.test(u)) os = 'Windows';
+  else if (/Mac OS X/.test(u) && !/Mobile/.test(u)) os = 'macOS';
+  else if (/Android/.test(u)) os = 'Android';
+  else if (/iPhone|iPad|iPod/.test(u)) os = 'iOS';
+  else if (/Linux/.test(u)) os = 'Linux';
+  let device = 'Desktop';
+  if (/iPad|Tablet/.test(u)) device = 'Tablet';
+  else if (/iPhone|Android.*Mobile|Mobi/.test(u)) device = 'Mobile';
+  return { browser: browser.trim(), os, device };
+}
+function shortUrl(u, max) {
+  if (!u) return '—';
+  try { const url = new URL(u); const p = url.pathname + url.search; return p.length > max ? p.slice(0, max) + '…' : (p || '/'); }
+  catch (e) { return u.length > max ? u.slice(0, max) + '…' : u; }
+}
+async function copyToClipboard(text) {
+  try { await navigator.clipboard.writeText(text); dbg('copied: ' + text.slice(0, 30)); }
+  catch (e) { dbg('copy failed: ' + e.message); }
+}
+window.__copySid = function (sid) { copyToClipboard(sid); };
+
+function renderDetail(s, summary) {
+  const meta = summary.meta;
+  const sum = summary.summary;
+  const ua = parseUA(meta.ua);
+  const vp = sum.viewport ? sum.viewport.w + '×' + sum.viewport.h : '—';
+  const activity = sum.activity || {};
+  const playable = sum.playable ? '<span class="badge ok">✓ playable</span>' : '<span class="badge err">✗ no snapshot</span>';
+  const entryPath = shortUrl(sum.entryUrl, 50);
+  const exitPath = shortUrl(sum.exitUrl, 50);
+  const pageList = (sum.pages || []).map(p => '<div>' + esc(shortUrl(p, 60)) + '</div>').join('') || '<div class="k">—</div>';
+  return `
+    <div class="detail">
+      <div class="grid2">
+        <div class="row"><span class="k">Zariadenie</span><span class="v">${esc(ua.device)}</span></div>
+        <div class="row"><span class="k">OS</span><span class="v">${esc(ua.os)}</span></div>
+        <div class="row"><span class="k">Browser</span><span class="v">${esc(ua.browser)}</span></div>
+        <div class="row"><span class="k">Viewport</span><span class="v">${esc(vp)}</span></div>
+        <div class="row"><span class="k">Krajina</span><span class="v">${meta.country ? esc(meta.country) : '—'}</span></div>
+        <div class="row"><span class="k">Jazyk</span><span class="v">${meta.language ? esc(meta.language) : '—'}</span></div>
+      </div>
+
+      <h4>Cesta</h4>
+      <div class="row"><span class="k">Referrer</span><span class="v">${meta.referrer ? esc(shortUrl(meta.referrer, 40)) : '(direct)'}</span></div>
+      <div class="row"><span class="k">Entry</span><span class="v">${esc(entryPath)}</span></div>
+      <div class="row"><span class="k">Exit</span><span class="v">${esc(exitPath)}</span></div>
+      <div class="row"><span class="k">Stránok</span><span class="v">${sum.pagesCount}</span></div>
+      <details><summary>Zobraz všetky stránky</summary><div class="url-list">${pageList}</div></details>
+
+      <h4>Aktivita</h4>
+      <div class="grid2">
+        <div class="row"><span class="k">Kliky</span><span class="v">${activity.interactions || 0}</span></div>
+        <div class="row"><span class="k">Scrolly</span><span class="v">${activity.scrolls || 0}</span></div>
+        <div class="row"><span class="k">Inputy</span><span class="v">${activity.inputs || 0}</span></div>
+        <div class="row"><span class="k">DOM zmien</span><span class="v">${activity.mutations || 0}</span></div>
+      </div>
+
+      <h4>Čas</h4>
+      <div class="grid2">
+        <div class="row"><span class="k">Skut. trvanie</span><span class="v">${fmtDur(sum.actualDurationMs)}</span></div>
+        <div class="row"><span class="k">Aktívny čas</span><span class="v">${fmtDur(sum.activeMs)}</span></div>
+        <div class="row"><span class="k">Server trvanie</span><span class="v">${fmtDur(meta.dur || (meta.last_seen - meta.first_seen))}</span></div>
+        <div class="row"><span class="k">Eventov</span><span class="v">${sum.eventCount}</span></div>
+      </div>
+
+      <h4>Meta</h4>
+      <div class="row"><span class="k">Playable</span><span class="v">${playable}</span></div>
+      <div class="row"><span class="k">Session ID</span><span class="v"><span class="copy" onclick="window.__copySid('${esc(meta.id)}')">${esc(meta.id.slice(0, 12))}…</span></span></div>
+      <details><summary>UA raw</summary><pre>${esc(meta.ua)}</pre></details>
+    </div>`;
+}
+
+const summaryCache = new Map();
+
+async function loadSummary(site, id) {
+  const key = site + '/' + id;
+  if (summaryCache.has(key)) return summaryCache.get(key);
+  const p = fetch('/api/sessions/' + encodeURIComponent(site) + '/' + encodeURIComponent(id) + '/summary')
+    .then(r => r.ok ? r.json() : Promise.reject('HTTP ' + r.status));
+  summaryCache.set(key, p);
+  return p;
+}
 
 async function loadList() {
   const rows = await fetch('/api/sessions').then(r => r.json());
@@ -79,13 +192,24 @@ async function loadList() {
   rows.forEach(function (s) {
     const div = document.createElement('div');
     div.className = 'item';
+    div.dataset.site = s.site;
+    div.dataset.id = s.id;
     div.innerHTML =
-      '<div class="u">' + (s.url || '(bez URL)') + '</div>' +
+      '<div class="u">' + esc(s.url || '(bez URL)') + '</div>' +
       '<div class="m">' + fmtDate(s.last_seen) + ' · <span class="pill">' + fmtDur(s.dur) + '</span> · ' +
-      s.n + ' eventov · ' + s.site + '</div>';
-    div.onclick = function () {
+      s.n + ' eventov · ' + esc(s.site) + '</div>' +
+      '<div class="detail-slot"></div>';
+    div.onclick = async function () {
       document.querySelectorAll('.item').forEach(function (x) { x.classList.remove('active'); });
       div.classList.add('active');
+      const slot = div.querySelector('.detail-slot');
+      slot.innerHTML = '<div class="detail" style="color:var(--muted)">Načítavam metadáta…</div>';
+      // Paralelne: fetch summary + spustí playback
+      loadSummary(s.site, s.id).then(function (summary) {
+        slot.innerHTML = renderDetail(s, summary);
+      }).catch(function (e) {
+        slot.innerHTML = '<div class="detail" style="color:#8a1e1e">Metadata fetch failed: ' + esc(e) + '</div>';
+      });
       play(s.site, s.id);
     };
     listEl.appendChild(div);
@@ -99,7 +223,7 @@ function showError(msg, detail) {
 
 // Debug bar — vidno stav bez otvárania Console
 const dbgBar = document.createElement('div');
-dbgBar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#222;color:#0f0;font:12px monospace;padding:6px 12px;z-index:9999;white-space:pre;overflow:auto;max-height:120px';
+dbgBar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#222;color:#0f0;font:11px monospace;padding:4px 12px;z-index:9999;white-space:pre;overflow:auto;max-height:48px;opacity:0.85';
 dbgBar.textContent = '[viewer] pripravený';
 document.body.appendChild(dbgBar);
 function dbg(msg) {
@@ -112,8 +236,10 @@ window.addEventListener('unhandledrejection', function (e) { dbg('PROMISE REJECT
 
 dbg('modules: Replayer=' + typeof Replayer + ' unpack=' + typeof unpack);
 
+let resizeHandler = null;
 function tearDown() {
   if (uiTimer) { clearInterval(uiTimer); uiTimer = null; }
+  if (resizeHandler) { window.removeEventListener('resize', resizeHandler); resizeHandler = null; }
   if (replayer) { try { replayer.pause(); replayer.destroy && replayer.destroy(); } catch (e) {} replayer = null; }
 }
 
@@ -147,12 +273,9 @@ async function play(site, id) {
   mainEl.innerHTML = '';
   const player = document.createElement('div');
   player.className = 'player';
-  player.style.width = Math.min(1000, mainEl.clientWidth - 40) + 'px';
 
   const stage = document.createElement('div');
   stage.className = 'stage';
-  stage.style.width = Math.min(1000, mainEl.clientWidth - 40) + 'px';
-  stage.style.height = '540px';
   player.appendChild(stage);
 
   const controls = document.createElement('div');
@@ -230,38 +353,42 @@ async function play(site, id) {
     return;
   }
 
-  // Dopočítaj scale a nastav rozmery stage podľa reálneho viewportu.
-  // rrweb štandardne pozicuje .replayer-wrapper na absolute; top:50%; left:50%;
-  // transform: translate(-50%,-50%). Naša scale transform to prepísala a wrapper
-  // sa vysunul mimo stage. Musíme override-nuť aj position aj transform naraz.
-  const stageW = Math.min(1000, mainEl.clientWidth - 40);
-  const scale = Math.min(stageW / vpW, 540 / vpH);
-  const scaledH = Math.round(vpH * scale);
-  stage.style.width = stageW + 'px';
-  stage.style.height = scaledH + 'px';
-  const wrapper = stage.querySelector('.replayer-wrapper');
-  if (wrapper) {
-    wrapper.style.setProperty('position', 'absolute', 'important');
-    wrapper.style.setProperty('top', '0', 'important');
-    wrapper.style.setProperty('left', '0', 'important');
-    wrapper.style.setProperty('transform-origin', 'top left', 'important');
-    wrapper.style.setProperty('transform', 'scale(' + scale + ')', 'important');
-    dbg('applied scale=' + scale.toFixed(3) + ' stage=' + stageW + 'x' + scaledH);
-  } else {
-    dbg('WARN: .replayer-wrapper not found — scale not applied');
+  // Fit-scale player do dostupnej plochy .main (bez upscale).
+  // Available = clientWidth/Height mainu - padding - výška controls (~48).
+  function applyFit() {
+    const availW = mainEl.clientWidth - 32;      // .main padding 16 na kazdej strane
+    const availH = mainEl.clientHeight - 32 - 48; // + ~48px na controls
+    const scale = Math.min(1, availW / vpW, availH / vpH);
+    const scaledW = Math.round(vpW * scale);
+    const scaledH = Math.round(vpH * scale);
+    player.style.width = scaledW + 'px';
+    stage.style.width = scaledW + 'px';
+    stage.style.height = scaledH + 'px';
+    const wrapper = stage.querySelector('.replayer-wrapper');
+    if (wrapper) {
+      wrapper.style.setProperty('position', 'absolute', 'important');
+      wrapper.style.setProperty('top', '0', 'important');
+      wrapper.style.setProperty('left', '0', 'important');
+      wrapper.style.setProperty('transform-origin', 'top left', 'important');
+      wrapper.style.setProperty('transform', 'scale(' + scale + ')', 'important');
+    }
+    return { scale, scaledW, scaledH, availW, availH };
   }
+  const fit = applyFit();
+  dbg('fit: scale=' + fit.scale.toFixed(3) + ' → ' + fit.scaledW + 'x' + fit.scaledH + ' (avail ' + fit.availW + 'x' + fit.availH + ')');
 
-  // Diagnostika reálnych pozícií (po 500 ms, aby rrweb stihol nasetovať iframe rozmery)
-  setTimeout(function () {
-    const st = stage.getBoundingClientRect();
-    const w = stage.querySelector('.replayer-wrapper');
-    const wr = w && w.getBoundingClientRect();
-    const ifr = w && w.querySelector('iframe');
-    const ir = ifr && ifr.getBoundingClientRect();
-    dbg('stage@' + Math.round(st.left) + ',' + Math.round(st.top) + ' ' + Math.round(st.width) + 'x' + Math.round(st.height));
-    if (wr) dbg('wrapper@' + Math.round(wr.left) + ',' + Math.round(wr.top) + ' ' + Math.round(wr.width) + 'x' + Math.round(wr.height) + ' transform=' + w.style.transform);
-    if (ir) dbg('iframe@' + Math.round(ir.left) + ',' + Math.round(ir.top) + ' ' + Math.round(ir.width) + 'x' + Math.round(ir.height) + ' attr=' + ifr.getAttribute('width') + 'x' + ifr.getAttribute('height'));
-  }, 500);
+  // Debounced resize — prepočíta fit pri zmene okna
+  let resizeTimer = null;
+  resizeHandler = function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      if (replayer) {
+        const f = applyFit();
+        dbg('resize → scale=' + f.scale.toFixed(3) + ' ' + f.scaledW + 'x' + f.scaledH);
+      }
+    }, 150);
+  };
+  window.addEventListener('resize', resizeHandler);
 
   // Meta + UI wiring
   const meta = replayer.getMetaData();
