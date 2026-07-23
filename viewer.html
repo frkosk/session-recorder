@@ -218,17 +218,22 @@ async function play(site, id) {
     return;
   }
 
-  // Dopočítaj scale a nastav rozmery stage podľa reálneho viewportu
+  // Dopočítaj scale a nastav rozmery stage podľa reálneho viewportu.
+  // rrweb štandardne pozicuje .replayer-wrapper na absolute; top:50%; left:50%;
+  // transform: translate(-50%,-50%). Naša scale transform to prepísala a wrapper
+  // sa vysunul mimo stage. Musíme override-nuť aj position aj transform naraz.
   const stageW = Math.min(1000, mainEl.clientWidth - 40);
   const scale = Math.min(stageW / vpW, 540 / vpH);
   const scaledH = Math.round(vpH * scale);
   stage.style.width = stageW + 'px';
   stage.style.height = scaledH + 'px';
-  // rrweb vloží .replayer-wrapper do stage; naň dáme transform
   const wrapper = stage.querySelector('.replayer-wrapper');
   if (wrapper) {
-    wrapper.style.transformOrigin = 'top left';
-    wrapper.style.transform = 'scale(' + scale + ')';
+    wrapper.style.setProperty('position', 'absolute', 'important');
+    wrapper.style.setProperty('top', '0', 'important');
+    wrapper.style.setProperty('left', '0', 'important');
+    wrapper.style.setProperty('transform-origin', 'top left', 'important');
+    wrapper.style.setProperty('transform', 'scale(' + scale + ')', 'important');
     dbg('applied scale=' + scale.toFixed(3) + ' stage=' + stageW + 'x' + scaledH);
   } else {
     dbg('WARN: .replayer-wrapper not found — scale not applied');
