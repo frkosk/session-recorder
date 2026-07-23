@@ -1,0 +1,41 @@
+# docker-compose.yml — minimal single-service setup for the session recorder.
+#
+# Usage:
+#   1. cp .env.example .env  (then edit DASH_PASS and SITES)
+#   2. docker compose up -d --build
+#   3. Put a reverse proxy (Traefik/Nginx/Caddy/Cloudflare Tunnel) in front
+#      that terminates TLS and forwards to the "recorder" service on port 3000.
+#
+# The recorder container itself does NOT terminate TLS. HTTPS is required
+# in production because we send cookies (Basic Auth for the dashboard) and
+# sendBeacon on unload prefers HTTPS.
+
+services:
+  recorder:
+    build: .
+    container_name: session-recorder
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      # Only expose to localhost — your reverse proxy connects here.
+      # If you're running behind Coolify/Dokploy/Nomad, remove this block
+      # and let their proxy attach directly to the container network.
+      - "127.0.0.1:3000:3000"
+    volumes:
+      # SQLite DB + WAL files live here. Use a named volume for portability
+      # or a bind mount to a specific SSD path if you have one (see below).
+      - recorder-data:/data
+      # --- Alternative: bind mount to a specific SSD path (e.g. RPi5) ---
+      # - /mnt/ssd/session-recorder:/data
+      # Make sure the host directory is owned by uid 1000 (the "node" user
+      # inside the container), otherwise SQLite will fail with EACCES.
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:'+(process.env.PORT||3000)+'/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  recorder-data:
