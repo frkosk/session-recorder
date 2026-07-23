@@ -238,18 +238,45 @@ rrweb anyway.
 Open `https://<your-recorder-host>/` — Basic Auth with `DASH_USER` /
 `DASH_PASS`.
 
-Left column: session list, newest first. Clicking a row does two things:
+Left column: **filter bar** on top of the session list.
+
+- **Site dropdown** — hidden when only one site is configured, shows a
+  per-site filter once multiple sites are ingesting.
+- **Label dropdown** — filter by manual classification (see below), by
+  "no label", or across all.
+- **`iba playable` toggle** — hide sessions that never delivered a
+  FullSnapshot (unplayable).
+- **Search input** — case-insensitive substring match against the
+  session's last URL (200 ms debounce).
+- Current filter state is mirrored to the URL hash
+  (`#site=X&label=Y&playable=1&q=checkout`) so filters survive reloads
+  and can be shared as bookmarks.
+
+Each session row:
+
+- **Colored dot** left of the site name = deterministic per-site colour
+  (hash of siteKey → HSL hue), so multi-site views are visually
+  scannable.
+- **Label pill** in the top-right corner. Click to open a small picker
+  with four preset labels — **interesting** (gold), **reviewed**
+  (green), **issue** (red), **test** (grey) — plus a "no label" option.
+  Toggling the label is one click, syncs via `PATCH` to the server.
+
+Clicking a row does two things:
 
 1. **Expands the row** into a detail card showing: device / OS / browser
    (parsed from User-Agent), viewport, country (via bundled MaxMind
    GeoLite2), preferred language, referrer, entry / exit URLs, page
    list, activity counts (interactions / scrolls / inputs / DOM
    changes), actual vs server-side duration, active-time estimate,
-   playability status, and a copyable session ID.
+   playability status, copyable session ID, and a **Delete** button
+   (hard delete, single confirm dialog).
 2. **Loads the session into the player** on the right. The player fits
    its stage to the recorded viewport size (never upscales), redraws
    on window resize, and offers play / pause, click-to-seek scrubber,
-   and 0.5× — 8× speed.
+   0.5× — 8× speed, skip-inactive toggle, and colored timeline markers
+   for clicks (green), inputs (orange), and page navigation (purple)
+   with click-to-seek.
 
 If a session's dashboard row shows a red "✗ no snapshot" badge, the
 recorder never delivered a FullSnapshot event to the server (usually
@@ -293,10 +320,20 @@ origin allowlist + rate limit).
 - `GET /recorder.js` — the client script (public).
 - `GET /` — dashboard HTML (auth).
 - `GET /api/sessions` — session list, newest first, hard-capped at 500.
+  Each row includes `label` (nullable) and `has_snapshot` (0/1) so the
+  dashboard can filter without extra fetches.
 - `GET /api/sessions/:site/:id` — full packed events array for playback.
 - `GET /api/sessions/:site/:id/summary` — parsed aggregates (viewport,
   pages, activity counts, timing) plus session metadata. Cheaper than
   fetching all events client-side.
+- `PATCH /api/sessions/:site/:id` — update mutable metadata. Currently
+  only `label` is supported. Body `application/json`:
+  `{ "label": "interesting" | "reviewed" | "issue" | "test" | null }`.
+  Returns `200 {ok: true, label}` on success, `400` for invalid label,
+  `404` for unknown session.
+- `DELETE /api/sessions/:site/:id` — hard delete. Removes the session
+  row and all its events in a single transaction. Returns `204` on
+  success, `404` if the session doesn't exist.
 
 ---
 

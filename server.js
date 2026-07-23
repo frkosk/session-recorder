@@ -63,33 +63,55 @@ db.exec(`
     site TEXT, id TEXT, first_seen INTEGER, last_seen INTEGER,
     url TEXT, ua TEXT, n INTEGER,
     referrer TEXT, country TEXT, language TEXT,
+    label TEXT, has_snapshot INTEGER DEFAULT 0,
     PRIMARY KEY(site, id));
   CREATE TABLE IF NOT EXISTS events(
     site TEXT, sid TEXT, seq INTEGER, ts INTEGER, data TEXT);
   CREATE INDEX IF NOT EXISTS idx_events ON events(site, sid, seq);
 `);
-// Idempotentne pridaj stĺpce pre staršie DB (ALTER TABLE ADD COLUMN vyhodí ak už existuje)
-for (const col of ['referrer', 'country', 'language']) {
-  try { db.exec(`ALTER TABLE sessions ADD COLUMN ${col} TEXT`); } catch (e) {}
-}
+// Idempotentne pridaj stĺpce pre staršie DB (ALTER TABLE ADD COLUMN vyhodí ak už existuje).
+// Type suffixy sú explicit — SQLite je flexibilný, ale keep-schema-in-sync s CREATE TABLE.
+const addCol = (col, type) => { try { db.exec(`ALTER TABLE sessions ADD COLUMN ${col} ${type}`); } catch (e) {} };
+addCol('referrer', 'TEXT');
+addCol('country', 'TEXT');
+addCol('language', 'TEXT');
+addCol('label', 'TEXT');
+addCol('has_snapshot', 'INTEGER DEFAULT 0');
+
+// One-time backfill has_snapshot pre existujúce sessions cez size heuristiku
+// (packed FullSnapshot je typicky > 15 KB, Meta ~200 B). Beží iba raz keď je stĺpec
+// nový alebo väčšinou 0 — bezpečné aj opakovane.
+try {
+  const backfilled = db.prepare(`
+    UPDATE sessions SET has_snapshot=1
+    WHERE has_snapshot=0
+      AND (site, id) IN (
+        SELECT site, sid FROM events WHERE LENGTH(data) > 15000 GROUP BY site, sid
+      )`).run();
+  if (backfilled.changes > 0) console.log('[backfill] has_snapshot set on ' + backfilled.changes + ' legacy sessions');
+} catch (e) { console.warn('[backfill] failed:', e.message); }
 
 const qMaxSeq = db.prepare('SELECT COALESCE(MAX(seq), -1) AS m FROM events WHERE site=? AND sid=?');
 const qInsEvent = db.prepare('INSERT INTO events(site, sid, seq, ts, data) VALUES(?,?,?,?,?)');
 const qUpsertSession = db.prepare(`
-  INSERT INTO sessions(site, id, first_seen, last_seen, url, ua, n, referrer, country, language)
-  VALUES(@site, @id, @ts, @ts, @url, @ua, @n, @referrer, @country, @language)
+  INSERT INTO sessions(site, id, first_seen, last_seen, url, ua, n, referrer, country, language, has_snapshot)
+  VALUES(@site, @id, @ts, @ts, @url, @ua, @n, @referrer, @country, @language, @has_snapshot)
   ON CONFLICT(site, id) DO UPDATE SET
     last_seen=@ts, n=n+@n, url=excluded.url,
     referrer=COALESCE(sessions.referrer, excluded.referrer),
     country=COALESCE(sessions.country, excluded.country),
-    language=COALESCE(sessions.language, excluded.language)`);
+    language=COALESCE(sessions.language, excluded.language),
+    has_snapshot=MAX(sessions.has_snapshot, excluded.has_snapshot)`);
 const qList = db.prepare(`
   SELECT site, id, first_seen, last_seen, url, ua, n,
          (last_seen - first_seen) AS dur,
-         referrer, country, language
+         referrer, country, language, label, has_snapshot
   FROM sessions ORDER BY last_seen DESC LIMIT 500`);
 const qEvents = db.prepare('SELECT data FROM events WHERE site=? AND sid=? ORDER BY seq ASC');
 const qSession = db.prepare('SELECT * FROM sessions WHERE site=? AND id=?');
+const qDeleteEvents = db.prepare('DELETE FROM events WHERE site=? AND sid=?');
+const qDeleteSession = db.prepare('DELETE FROM sessions WHERE site=? AND id=?');
+const qUpdateLabel = db.prepare('UPDATE sessions SET label=? WHERE site=? AND id=?');
 
 const app = express();
 app.disable('x-powered-by');
@@ -165,13 +187,26 @@ app.post('/i/:site', rateLimit, express.text({ type: function () { return true; 
   var language = (langHdr.split(',')[0].split(';')[0].trim() || null);
   var base = qMaxSeq.get(site, sid).m + 1;
 
+  // Detekcia FullSnapshot/Meta v tejto dávke — decompress len prvý event (typicky <500B).
+  // rrweb emituje Meta (type=4) ako prvý event pri record() štarte, FullSnapshot (type=2)
+  // hneď za ním. Ak dávka začína Meta alebo FullSnapshot, session má baseline pre playback.
+  var hasSnapshotInBatch = 0;
+  try {
+    if (typeof events[0] === 'string') {
+      var firstBuf = Buffer.from(events[0], 'binary');
+      var firstObj = JSON.parse(zlib.inflateSync(firstBuf).toString('utf8'));
+      if (firstObj.type === 2 || firstObj.type === 4) hasSnapshotInBatch = 1;
+    }
+  } catch (e) { /* neinjectuj do session, nechaj MAX() logiku spraviť svoje */ }
+
   var tx = db.transaction(function () {
     events.forEach(function (e, i) {
       qInsEvent.run(site, sid, base + i, now, typeof e === 'string' ? e : JSON.stringify(e));
     });
     qUpsertSession.run({
       site: site, id: sid, ts: now, url: url, ua: ua, n: events.length,
-      referrer: referrer, country: country, language: language
+      referrer: referrer, country: country, language: language,
+      has_snapshot: hasSnapshotInBatch
     });
   });
   tx();
@@ -219,6 +254,35 @@ app.get('/api/sessions/:site/:id/summary', auth, function (req, res) {
   var rows = qEvents.all(req.params.site, req.params.id);
   var s = computeSummary(rows);
   res.json({ meta: meta, summary: s });
+});
+
+// Zmazanie session — hard delete v transakcii (events + sessions row).
+app.delete('/api/sessions/:site/:id', auth, function (req, res) {
+  var site = req.params.site, id = req.params.id;
+  var existed = qSession.get(site, id);
+  if (!existed) return res.status(404).json({ error: 'not found' });
+  db.transaction(function () {
+    qDeleteEvents.run(site, id);
+    qDeleteSession.run(site, id);
+  })();
+  res.status(204).end();
+});
+
+// Update label — jediné meniteľné metadáta cez PATCH.
+// Body: {"label": "interesting"|"reviewed"|"issue"|"test"|null}
+var VALID_LABELS = ['interesting', 'reviewed', 'issue', 'test'];
+app.patch('/api/sessions/:site/:id', auth, express.json({ limit: '4kb' }), function (req, res) {
+  var site = req.params.site, id = req.params.id;
+  var body = req.body || {};
+  if (!('label' in body)) return res.status(400).json({ error: 'missing "label" field' });
+  var label = body.label;
+  if (label !== null && VALID_LABELS.indexOf(label) === -1) {
+    return res.status(400).json({ error: 'invalid label', allowed: VALID_LABELS.concat([null]) });
+  }
+  var existed = qSession.get(site, id);
+  if (!existed) return res.status(404).json({ error: 'not found' });
+  qUpdateLabel.run(label, site, id);
+  res.status(200).json({ ok: true, label: label });
 });
 
 function computeSummary(rows) {

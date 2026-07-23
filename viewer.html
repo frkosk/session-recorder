@@ -11,12 +11,43 @@
   header { padding:14px 20px; border-bottom:1px solid var(--line); background:var(--card); }
   header h1 { margin:0; font-size:16px; font-weight:600; }
   .wrap { display:grid; grid-template-columns:320px 1fr; height:calc(100vh - 51px); }
-  .list { border-right:1px solid var(--line); overflow:auto; background:var(--card); }
-  .item { padding:11px 16px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .list { border-right:1px solid var(--line); overflow:auto; background:var(--card); display:flex; flex-direction:column; }
+
+  /* Filter bar — sticky nad zoznamom */
+  .filters { position:sticky; top:0; background:var(--card); border-bottom:1px solid var(--line); padding:8px 12px; display:flex; flex-direction:column; gap:6px; z-index:2; }
+  .filters .row { display:flex; gap:6px; align-items:center; }
+  .filters select, .filters input[type="text"] { flex:1; min-width:0; padding:4px 6px; font-size:12px; border:1px solid var(--line); border-radius:3px; background:var(--card); }
+  .filters label.chk { display:flex; align-items:center; gap:4px; font-size:12px; color:var(--muted); cursor:pointer; white-space:nowrap; }
+  .filters label.chk input { margin:0; }
+  .filters .count { font-size:11px; color:var(--muted); text-align:right; }
+
+  .list-items { overflow:auto; flex:1; }
+  .item { padding:11px 16px; border-bottom:1px solid var(--line); cursor:pointer; position:relative; }
   .item:hover { background:var(--bg); }
   .item.active { background:#e8f2ee; border-left:3px solid var(--accent); padding-left:13px; }
-  .item .u { font-size:13px; color:var(--ink); word-break:break-all; }
-  .item .m { font-size:12px; color:var(--muted); margin-top:3px; }
+  .item .u { font-size:13px; color:var(--ink); word-break:break-all; padding-right:26px; }
+  .item .m { font-size:12px; color:var(--muted); margin-top:3px; padding-right:26px; }
+  .item .site-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+
+  /* Label pill — pravý horný roh, klik otvorí picker */
+  .label-wrap { position:absolute; top:8px; right:10px; }
+  .label-pill { width:14px; height:14px; border-radius:50%; border:1.5px solid var(--muted); background:transparent; cursor:pointer; padding:0; display:block; }
+  .label-pill.interesting { background:#e6b800; border-color:#b38f00; }
+  .label-pill.reviewed    { background:#4caf50; border-color:#2e7031; }
+  .label-pill.issue       { background:#e53935; border-color:#a02724; }
+  .label-pill.test        { background:#9e9e9e; border-color:#616161; }
+  .label-picker { display:none; position:absolute; top:22px; right:0; background:var(--card); border:1px solid var(--line); border-radius:4px; padding:4px; box-shadow:0 2px 8px rgba(0,0,0,0.15); z-index:3; }
+  .label-wrap.open .label-picker { display:flex; gap:3px; }
+  .label-picker button { width:22px; height:22px; border-radius:50%; border:1.5px solid var(--muted); background:transparent; cursor:pointer; padding:0; }
+  .label-picker button.interesting { background:#e6b800; border-color:#b38f00; }
+  .label-picker button.reviewed    { background:#4caf50; border-color:#2e7031; }
+  .label-picker button.issue       { background:#e53935; border-color:#a02724; }
+  .label-picker button.test        { background:#9e9e9e; border-color:#616161; }
+  .label-picker button:hover { transform:scale(1.15); }
+
+  /* Delete button v detail paneli */
+  .detail .delete-btn { display:inline-block; margin-top:10px; padding:5px 10px; font-size:12px; background:#fbdcdc; border:1px solid #e6a3a3; color:#8a1e1e; border-radius:3px; cursor:pointer; }
+  .detail .delete-btn:hover { background:#f5c8c8; }
 
   /* Rozbalená karta s metadátami session — visible len keď .item.active */
   .item .detail { display:none; margin-top:10px; padding-top:10px; border-top:1px dashed var(--line); font-size:12px; color:var(--ink); }
@@ -72,7 +103,27 @@
 <body>
 <header><h1>Session recorder — nahrávky</h1></header>
 <div class="wrap">
-  <div class="list" id="list"></div>
+  <div class="list">
+    <div class="filters" id="filters">
+      <div class="row">
+        <select id="f-site" title="Filter podľa site"><option value="">Všetky sites</option></select>
+        <select id="f-label" title="Filter podľa labelu">
+          <option value="">Všetky labely</option>
+          <option value="__none__">Bez labelu</option>
+          <option value="interesting">interesting</option>
+          <option value="reviewed">reviewed</option>
+          <option value="issue">issue</option>
+          <option value="test">test</option>
+        </select>
+      </div>
+      <div class="row">
+        <input type="text" id="f-search" placeholder="Hľadať v URL…">
+        <label class="chk" title="Skryť sessions bez FullSnapshot"><input type="checkbox" id="f-playable">iba playable</label>
+      </div>
+      <div class="count" id="f-count"></div>
+    </div>
+    <div class="list-items" id="list"></div>
+  </div>
   <div class="main" id="main"><div class="empty">Vyber reláciu vľavo.</div></div>
 </div>
 
@@ -176,22 +227,63 @@ function renderDetail(s, summary) {
       <div class="row"><span class="k">Playable</span><span class="v">${playable}</span></div>
       <div class="row"><span class="k">Session ID</span><span class="v"><span class="copy" data-sid="${esc(meta.id)}" title="Copy full ID">${esc(meta.id.slice(0, 12))}…</span></span></div>
       <details><summary>UA raw</summary><pre>${esc(meta.ua)}</pre></details>
+      <button class="delete-btn" data-delete title="Zmazať túto session z DB">Zmazať nahrávku</button>
     </div>`;
 }
 
 const summaryCache = new Map();
+const LABELS = ['interesting', 'reviewed', 'issue', 'test'];
 
-// Delegated click: copy tlačidlá vnútri detail panelov
-listEl.addEventListener('click', function (e) {
-  const c = e.target && e.target.closest && e.target.closest('.copy');
-  if (c && c.dataset.sid) {
-    e.stopPropagation(); // nespúšťaj play(session)
-    copyToClipboard(c.dataset.sid);
-    const orig = c.textContent;
-    c.textContent = 'skopírované';
-    setTimeout(function () { c.textContent = orig; }, 1000);
-  }
-});
+// Deterministic hue z siteKey pre farebný badge
+function siteHue(key) {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (((h << 5) - h) + key.charCodeAt(i)) | 0;
+  return Math.abs(h) % 360;
+}
+function siteDotStyle(key) { return 'background: hsl(' + siteHue(key) + ', 60%, 55%)'; }
+
+// URL hash state — bookmarkovatelný filter
+function parseHash() {
+  const p = new URLSearchParams(location.hash.replace(/^#/, ''));
+  return { site: p.get('site') || '', label: p.get('label') || '', playable: p.get('playable') === '1', q: p.get('q') || '' };
+}
+function writeHash(st) {
+  const parts = [];
+  if (st.site) parts.push('site=' + encodeURIComponent(st.site));
+  if (st.label) parts.push('label=' + encodeURIComponent(st.label));
+  if (st.playable) parts.push('playable=1');
+  if (st.q) parts.push('q=' + encodeURIComponent(st.q));
+  history.replaceState(null, '', parts.length ? '#' + parts.join('&') : location.pathname);
+}
+function getFilterState() {
+  return {
+    site: document.getElementById('f-site').value,
+    label: document.getElementById('f-label').value,
+    playable: document.getElementById('f-playable').checked,
+    q: document.getElementById('f-search').value.trim().toLowerCase()
+  };
+}
+function applyFilters() {
+  const st = getFilterState();
+  writeHash(st);
+  const items = listEl.querySelectorAll('.item');
+  let visible = 0;
+  items.forEach(function (el) {
+    const site = el.dataset.site;
+    const label = el.dataset.label || '';
+    const playable = el.dataset.hasSnapshot === '1';
+    const url = (el.dataset.url || '').toLowerCase();
+    let show = true;
+    if (st.site && site !== st.site) show = false;
+    if (st.label === '__none__' && label) show = false;
+    else if (st.label && st.label !== '__none__' && label !== st.label) show = false;
+    if (st.playable && !playable) show = false;
+    if (st.q && !url.includes(st.q)) show = false;
+    el.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  document.getElementById('f-count').textContent = items.length ? (visible + ' / ' + items.length + ' viditeľných') : '';
+}
 
 async function loadSummary(site, id) {
   const key = site + '/' + id;
@@ -201,27 +293,66 @@ async function loadSummary(site, id) {
   summaryCache.set(key, p);
   return p;
 }
+async function patchLabel(site, id, label) {
+  const r = await fetch('/api/sessions/' + encodeURIComponent(site) + '/' + encodeURIComponent(id), {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label: label || null })
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+async function deleteSession(site, id) {
+  const r = await fetch('/api/sessions/' + encodeURIComponent(site) + '/' + encodeURIComponent(id), { method: 'DELETE' });
+  if (!r.ok && r.status !== 404) throw new Error('HTTP ' + r.status);
+}
+
+function renderItem(s) {
+  const pillClass = s.label ? ('label-pill ' + s.label) : 'label-pill';
+  const pickerBtns = LABELS.map(function (l) {
+    return '<button class="' + l + '" data-label="' + l + '" title="' + l + '"></button>';
+  }).join('') + '<button data-label="" title="odstrániť label" style="background:transparent;border-style:dashed"></button>';
+
+  const div = document.createElement('div');
+  div.className = 'item';
+  div.dataset.site = s.site;
+  div.dataset.id = s.id;
+  div.dataset.label = s.label || '';
+  div.dataset.hasSnapshot = s.has_snapshot ? '1' : '0';
+  div.dataset.url = s.url || '';
+  div.innerHTML =
+    '<div class="label-wrap">' +
+      '<button class="' + pillClass + '" data-toggle-picker title="' + esc(s.label || 'nastaviť label') + '"></button>' +
+      '<div class="label-picker">' + pickerBtns + '</div>' +
+    '</div>' +
+    '<div class="u">' + esc(s.url || '(bez URL)') + '</div>' +
+    '<div class="m">' +
+      '<span class="site-dot" style="' + siteDotStyle(s.site) + '"></span>' +
+      fmtDate(s.last_seen) + ' · <span class="pill">' + fmtDur(s.dur) + '</span> · ' +
+      s.n + ' eventov · ' + esc(s.site) +
+    '</div>' +
+    '<div class="detail-slot"></div>';
+  return div;
+}
 
 async function loadList() {
   const rows = await fetch('/api/sessions').then(r => r.json());
-  if (!rows.length) { listEl.innerHTML = '<div class="empty" style="padding:16px">Zatiaľ žiadne relácie.</div>'; return; }
   listEl.innerHTML = '';
+  if (!rows.length) { listEl.innerHTML = '<div class="empty" style="padding:16px">Zatiaľ žiadne relácie.</div>'; return; }
+
+  // Populate site dropdown z unique sites; skry ak je len 1
+  const sites = Array.from(new Set(rows.map(function (r) { return r.site; }))).sort();
+  const siteEl = document.getElementById('f-site');
+  siteEl.innerHTML = '<option value="">Všetky sites</option>' +
+    sites.map(function (s) { return '<option value="' + esc(s) + '">' + esc(s) + '</option>'; }).join('');
+  siteEl.style.display = sites.length <= 1 ? 'none' : '';
+
   rows.forEach(function (s) {
-    const div = document.createElement('div');
-    div.className = 'item';
-    div.dataset.site = s.site;
-    div.dataset.id = s.id;
-    div.innerHTML =
-      '<div class="u">' + esc(s.url || '(bez URL)') + '</div>' +
-      '<div class="m">' + fmtDate(s.last_seen) + ' · <span class="pill">' + fmtDur(s.dur) + '</span> · ' +
-      s.n + ' eventov · ' + esc(s.site) + '</div>' +
-      '<div class="detail-slot"></div>';
+    const div = renderItem(s);
     div.onclick = async function () {
       document.querySelectorAll('.item').forEach(function (x) { x.classList.remove('active'); });
       div.classList.add('active');
       const slot = div.querySelector('.detail-slot');
       slot.innerHTML = '<div class="detail" style="color:var(--muted)">Načítavam metadáta…</div>';
-      // Paralelne: fetch summary + spustí playback
       loadSummary(s.site, s.id).then(function (summary) {
         slot.innerHTML = renderDetail(s, summary);
       }).catch(function (e) {
@@ -231,7 +362,97 @@ async function loadList() {
     };
     listEl.appendChild(div);
   });
+
+  // Restore filter state z URL hashu
+  const st = parseHash();
+  document.getElementById('f-site').value = st.site;
+  document.getElementById('f-label').value = st.label;
+  document.getElementById('f-playable').checked = st.playable;
+  document.getElementById('f-search').value = st.q;
+  applyFilters();
 }
+
+// Filter change handlers
+document.getElementById('f-site').addEventListener('change', applyFilters);
+document.getElementById('f-label').addEventListener('change', applyFilters);
+document.getElementById('f-playable').addEventListener('change', applyFilters);
+let searchTimer = null;
+document.getElementById('f-search').addEventListener('input', function () {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(applyFilters, 200);
+});
+
+// Delegated click: label picker, copy, delete
+listEl.addEventListener('click', function (e) {
+  const tgt = e.target;
+
+  // Copy session ID
+  const copy = tgt.closest && tgt.closest('.copy');
+  if (copy && copy.dataset.sid) {
+    e.stopPropagation();
+    copyToClipboard(copy.dataset.sid);
+    const orig = copy.textContent;
+    copy.textContent = 'skopírované';
+    setTimeout(function () { copy.textContent = orig; }, 1000);
+    return;
+  }
+
+  // Toggle label picker (klik na pill)
+  const pillToggle = tgt.closest && tgt.closest('[data-toggle-picker]');
+  if (pillToggle) {
+    e.stopPropagation();
+    const wrap = pillToggle.closest('.label-wrap');
+    document.querySelectorAll('.label-wrap.open').forEach(function (w) { if (w !== wrap) w.classList.remove('open'); });
+    wrap.classList.toggle('open');
+    return;
+  }
+
+  // Výber labelu z pickera
+  const pick = tgt.closest && tgt.closest('.label-picker button');
+  if (pick) {
+    e.stopPropagation();
+    const item = pick.closest('.item');
+    const wrap = pick.closest('.label-wrap');
+    const site = item.dataset.site, id = item.dataset.id;
+    const label = pick.dataset.label;
+    const pill = wrap.querySelector('[data-toggle-picker]');
+    pill.className = 'label-pill' + (label ? ' ' + label : '');
+    pill.title = label || 'nastaviť label';
+    item.dataset.label = label;
+    wrap.classList.remove('open');
+    patchLabel(site, id, label).catch(function (err) { console.error('label patch failed', err); alert('Uloženie labelu zlyhalo: ' + err.message); });
+    applyFilters();
+    return;
+  }
+
+  // Delete button
+  const del = tgt.closest && tgt.closest('[data-delete]');
+  if (del) {
+    e.stopPropagation();
+    const item = del.closest('.item');
+    if (!item) return;
+    const site = item.dataset.site, id = item.dataset.id;
+    if (!confirm('Naozaj zmazať túto nahrávku? Nedá sa vrátiť.')) return;
+    deleteSession(site, id).then(function () {
+      const wasActive = item.classList.contains('active');
+      item.remove();
+      summaryCache.delete(site + '/' + id);
+      if (wasActive) {
+        tearDown();
+        mainEl.innerHTML = '<div class="empty">Vyber reláciu vľavo.</div>';
+      }
+      applyFilters();
+    }).catch(function (err) { alert('Zmazanie zlyhalo: ' + err.message); });
+    return;
+  }
+});
+
+// Zavri picker pri outside click
+document.addEventListener('click', function (e) {
+  if (!e.target.closest || !e.target.closest('.label-wrap')) {
+    document.querySelectorAll('.label-wrap.open').forEach(function (w) { w.classList.remove('open'); });
+  }
+});
 
 function showError(msg, detail) {
   mainEl.innerHTML = '<div class="empty" style="max-width:700px;text-align:left"><b>Chyba prehrávania</b><br>' + msg +

@@ -198,15 +198,19 @@ events(site, sid, seq, ts, data)                        INDEX(site, sid, seq)
 
 ## 11. Budúce kroky / TODO
 
+- [x] ~~Základné metadáta relácie priamo v zozname (zariadenie, krajina, vstupná/výstupná stránka).~~ Hotové vo v0.2.0 cez expanded detail panel.
+- [x] ~~Rate-limit na ingest.~~ Hotové (`INGEST_RATE_PER_MIN`, default 120/min).
+- [x] ~~Dashboard workflow: mazanie, labelovanie, filtrovanie.~~ Hotové vo v0.2.0.
 - [ ] Doladiť maskovacie a `blockSelector` selektory presne pre konkrétnu PrestaShop tému a checkout.
-- [ ] Filter v dashboarde: zobraziť len relácie, ktoré sa dostali do košíka, ale nedokončili objednávku.
-- [ ] Základné metadáta relácie priamo v zozname (zariadenie, krajina, vstupná/výstupná stránka).
+- [ ] Filter v dashboarde: zobraziť len relácie, ktoré sa dostali do košíka, ale nedokončili objednávku. (URL search už čiastočne rieši.)
 - [ ] Zvážiť pinnutie konkrétnej rrweb verzie namiesto `current`.
 - [ ] (Voliteľné) First-party proxy skriptu a ingestu, ak adblockery začnú prekážať.
-- [ ] (Voliteľné) Rate-limit na ingest.
+- [ ] Export nahrávky (JSON / self-contained HTML) — deferred z v0.2.0.
+- [ ] Console error markery v playeri cez rrweb console-record plugin.
 
 ---
 
 ## 12. Changelog
 
-- **2026-07-21** — Prvá verzia: recorder + ingest (SQLite) + viewer + Docker/Coolify, návod na PrestaShop cez GTM a tému, maskovanie a súhlas. Dokumentácia rozhodnutí (tento súbor).
+- **2026-07-21** — v0.1.0: recorder + ingest (SQLite) + viewer + Docker/Coolify, návod na PrestaShop cez GTM a tému, maskovanie a súhlas.
+- **2026-07-23** — v0.2.0: dashboard workflow features — DELETE + PATCH endpointy, label picker (interesting/reviewed/issue/test), sticky filter bar (site/label/playable/search) s URL-hash persistence, deterministický color-badge per site, `has_snapshot` column pre playability filter (detekcia decompressom batch[0] na ingest ceste + one-time backfill starých session cez size heuristiku). Odložené: export, per-site auth, console error markery.
