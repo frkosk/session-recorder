@@ -30,6 +30,18 @@
   .controls .bar { flex:1; height:6px; background:var(--line); border-radius:3px; position:relative; cursor:pointer; }
   .controls .bar .fill { position:absolute; left:0; top:0; bottom:0; background:var(--accent); border-radius:3px; }
   .controls select { padding:4px 6px; font-size:13px; border:1px solid var(--line); border-radius:4px; background:var(--card); }
+
+  /* rrweb Replayer overlay CSS (mouse cursor + trace).
+     Bez position:absolute na mouse-tail sa canvas skladá v block-flow nad iframe
+     a wrapper má dvojnásobnú výšku — obsah končí pod stage. */
+  .replayer-mouse-tail { position: absolute; top:0; left:0; pointer-events: none; }
+  .replayer-mouse {
+    position: absolute; width:20px; height:20px;
+    transition: left 0.05s linear, top 0.05s linear;
+    background-size: contain; background-position: center center; background-repeat: no-repeat;
+    background-image: url('data:image/svg+xml;base64,PHN2ZyBoZWlnaHQ9JzMwMHB4JyB3aWR0aD0nMzAwcHgnICBmaWxsPSIjMDAwMDAwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGRhdGEtbmFtZT0iTGF5ZXIgMSIgdmlld0JveD0iMCAwIDUwIDUwIiB4PSIwcHgiIHk9IjBweCI+PHRpdGxlPkRlc2lnbl90bnA8L3RpdGxlPjxwYXRoIGQ9Ik00OC43MSw0Mi45MUwzNC4wOCwyOC4yOSw0NC4zMywxOEExLDEsMCwwLDAsNDQsMTYuMzlMMi4zNSwxLjA2QTEsMSwwLDAsMCwxLjA2LDIuMzVMMTYuMzksNDRhMSwxLDAsMCwwLDEuNjUuMzZMMjguMjksMzQuMDgsNDIuOTEsNDguNzFhMSwxLDAsMCwwLDEuNDEsMGw0LjM4LTQuMzhBMSwxLDAsMCwwLDQ4LjcxLDQyLjkxWm0tNS4wOSwzLjY3TDI5LDMyYTEsMSwwLDAsMC0xLjQxLDBsLTkuODUsOS44NUwzLjY5LDMuNjlsMzguMTIsMTRMMzIsMjcuNThBMSwxLDAsMCwwLDMyLDI5TDQ2LjU5LDQzLjYyWiI+PC9wYXRoPjwvc3ZnPg==');
+  }
+  .replayer-mouse::after { content:''; display:inline-block; width:20px; height:20px; background: rgb(73, 80, 246); border-radius:100%; transform: translate(-50%, -50%); opacity:0.3; }
 </style>
 </head>
 <body>
