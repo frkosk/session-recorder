@@ -153,6 +153,17 @@ async function play(site, id) {
   player.appendChild(controls);
   mainEl.appendChild(player);
 
+  // Zisti viewport z prvého Meta eventu (type 4)
+  let vpW = 1280, vpH = 720;
+  for (const ev of events) {
+    if (ev.type === 4 && ev.data && ev.data.width) {
+      vpW = ev.data.width;
+      vpH = ev.data.height;
+      break;
+    }
+  }
+  dbg('viewport: ' + vpW + 'x' + vpH);
+
   try {
     dbg('creating Replayer, events=' + events.length);
     replayer = new Replayer(events, {
@@ -166,6 +177,22 @@ async function play(site, id) {
     dbg('REPLAYER THREW: ' + (e.message || e));
     showError('rrweb Replayer padol pri inicializácii.', e.stack || e.message);
     return;
+  }
+
+  // Dopočítaj scale a nastav rozmery stage podľa reálneho viewportu
+  const stageW = Math.min(1000, mainEl.clientWidth - 40);
+  const scale = Math.min(stageW / vpW, 540 / vpH);
+  const scaledH = Math.round(vpH * scale);
+  stage.style.width = stageW + 'px';
+  stage.style.height = scaledH + 'px';
+  // rrweb vloží .replayer-wrapper do stage; naň dáme transform
+  const wrapper = stage.querySelector('.replayer-wrapper');
+  if (wrapper) {
+    wrapper.style.transformOrigin = 'top left';
+    wrapper.style.transform = 'scale(' + scale + ')';
+    dbg('applied scale=' + scale.toFixed(3) + ' stage=' + stageW + 'x' + scaledH);
+  } else {
+    dbg('WARN: .replayer-wrapper not found — scale not applied');
   }
 
   // Meta + UI wiring
