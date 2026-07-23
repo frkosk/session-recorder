@@ -68,26 +68,55 @@ async function loadList() {
   });
 }
 
+function showError(msg, detail) {
+  mainEl.innerHTML = '<div class="empty" style="max-width:700px;text-align:left"><b>Chyba prehrávania</b><br>' + msg +
+    (detail ? '<pre style="background:#fdd;padding:10px;overflow:auto;font-size:12px">' + String(detail).replace(/[<>]/g,'') + '</pre>' : '') + '</div>';
+}
+
 async function play(site, id) {
   mainEl.innerHTML = '<div class="empty">Načítavam…</div>';
-  const raw = await fetch('/api/sessions/' + encodeURIComponent(site) + '/' + encodeURIComponent(id)).then(r => r.json());
-  let events;
-  try { events = raw.events.map(unpack); } catch (e) { events = raw.events; }
-  if (!events || events.length < 2) { mainEl.innerHTML = '<div class="empty">Relácia je príliš krátka na prehratie.</div>'; return; }
+  let raw;
+  try {
+    raw = await fetch('/api/sessions/' + encodeURIComponent(site) + '/' + encodeURIComponent(id)).then(r => r.json());
+  } catch (e) { showError('fetch zlyhal', e.message); return; }
+
+  // Rozbaliť eventy jeden po druhom, chyby zobraz na strane
+  const events = [];
+  const unpackErrors = [];
+  const typeCounts = {};
+  for (let i = 0; i < raw.events.length; i++) {
+    try {
+      const ev = unpack(raw.events[i]);
+      events.push(ev);
+      typeCounts[ev.type] = (typeCounts[ev.type] || 0) + 1;
+    } catch (e) {
+      unpackErrors.push({ i, msg: e.message });
+    }
+  }
+  console.log('[viewer] events:', events.length, 'types:', typeCounts, 'unpack errors:', unpackErrors.length);
+  if (unpackErrors.length) console.warn('[viewer] first unpack error:', unpackErrors[0]);
+
+  if (events.length < 2) { showError('Relácia je príliš krátka (' + events.length + ' použiteľných eventov).', JSON.stringify(typeCounts)); return; }
+  if (!typeCounts[2]) { showError('Chýba FullSnapshot event (type=2). Player nemá odkiaľ začať.', JSON.stringify(typeCounts)); return; }
+
   mainEl.innerHTML = '';
   const box = document.createElement('div');
   mainEl.appendChild(box);
   if (player) { try { player.$destroy && player.$destroy(); } catch (e) {} }
-  player = new rrwebPlayer({
-    target: box,
-    props: {
-      events: events,
-      width: Math.min(1000, mainEl.clientWidth - 40),
-      height: 540,
-      autoPlay: false,
-      showController: true
-    }
-  });
+  try {
+    player = new rrwebPlayer({
+      target: box,
+      props: {
+        events: events,
+        width: Math.min(1000, mainEl.clientWidth - 40),
+        height: 540,
+        autoPlay: false,
+        showController: true
+      }
+    });
+  } catch (e) {
+    showError('rrweb-player padol pri inicializácii.', e.stack || e.message);
+  }
 }
 
 loadList();
