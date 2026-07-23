@@ -98,8 +98,14 @@
         }
       },
       packFn: window.rrweb.pack,      // komprimácia každého eventu
-      maskAllInputs: true,            // KĽÚČOVÉ: maskuje všetky vstupy
+      // KĽÚČOVÉ: default maskuje všetky vstupy. Ak chceš selektívny unmask
+      // (napr. len adresné polia), poskytni maskInputFn v __REC_CONFIG__ —
+      // vráti raw text pre povolené polia, inak masked. Password inputy
+      // maskuj vždy bez ohľadu na fn.
+      maskAllInputs: C.maskAllInputs !== undefined ? C.maskAllInputs : true,
+      maskInputFn: typeof C.maskInputFn === 'function' ? C.maskInputFn : undefined,
       maskTextClass: 'rr-mask',       // .rr-mask -> maskuje aj zobrazený text
+      unmaskTextClass: 'rr-unmask',   // .rr-unmask -> zobrazený text sa NEmaskuje
       blockClass: 'rr-block',         // .rr-block -> element sa vôbec nenahrá
       ignoreClass: 'rr-ignore',       // .rr-ignore -> ignoruje zmeny v elemente
       blockSelector: C.blockSelector || null,

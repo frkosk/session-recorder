@@ -278,6 +278,44 @@ checkout, walk through the recording and note any spot where you see
 customer PII. Add `rr-mask` / `rr-block` to those spots in the theme
 (usually in `checkout/*.tpl` and `customer/*.tpl` overrides).
 
+### Selectively **unmasking** specific input fields
+
+Sometimes you need to see what customers actually type in one specific
+field (e.g. shipping address, so you can see typos or unusual
+formatting), while keeping everything else masked. Do this by passing
+a `maskInputFn` in `__REC_CONFIG__`:
+
+```html
+<script>
+window.__REC_CONFIG__ = {
+  endpoint: 'https://rec.your-domain.com/i/myshop',
+  autostart: false,
+  // Unmask only the listed field names; mask everything else.
+  // Password inputs are ALWAYS masked regardless.
+  maskInputFn: function (text, element) {
+    if (!element || element.type === 'password') return '*'.repeat(text.length);
+    var name = String(element.name || element.id || '').toLowerCase();
+    // PrestaShop address fields — adjust for your form
+    var UNMASK = /^(firstname|lastname|address\d?|street|postcode|zip|city|phone(_mobile)?|company|vat_number)$/;
+    if (UNMASK.test(name)) return text;
+    return '*'.repeat(text.length);
+  }
+};
+</script>
+```
+
+Combine with the consent-gated loader from §3.3.
+
+> **Legal note.** The moment you record actual typed content of PII
+> fields (address, phone, name), you leave "behaviour analytics"
+> territory and enter "processing of personal data". Your privacy
+> policy and cookie consent must explicitly cover this. For an EU
+> e-commerce site, get legal review before enabling this.
+
+If you'd rather annotate at the HTML level than in JS, the recorder
+also honours `class="rr-unmask"` on any element — that element's text
+and inputs are exempt from masking. Same legal caveat applies.
+
 ---
 
 ## 6. Verifying end-to-end
