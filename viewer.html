@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Session recorder</title>
-<link rel="stylesheet" href="https://cdn.rrweb.com/rrweb-player/current/style.css">
 <style>
   :root { --bg:#f6f6f4; --card:#fff; --ink:#1f1f1d; --muted:#6b6b66; --line:#e3e2dc; --accent:#1d6e56; }
   * { box-sizing: border-box; }
@@ -18,9 +17,19 @@
   .item.active { background:#e8f2ee; border-left:3px solid var(--accent); padding-left:13px; }
   .item .u { font-size:13px; color:var(--ink); word-break:break-all; }
   .item .m { font-size:12px; color:var(--muted); margin-top:3px; }
-  .main { overflow:auto; padding:20px; display:flex; align-items:flex-start; justify-content:center; }
+  .main { overflow:auto; padding:20px 20px 140px; display:flex; align-items:flex-start; justify-content:center; }
   .empty { color:var(--muted); margin-top:60px; }
   .pill { display:inline-block; background:var(--bg); border:1px solid var(--line); border-radius:20px; padding:1px 8px; font-size:11px; color:var(--muted); }
+  .player { background:var(--card); border:1px solid var(--line); border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,.05); overflow:hidden; }
+  .player .stage { position:relative; background:#fff; overflow:hidden; }
+  .player .stage iframe { border:0; display:block; }
+  .controls { display:flex; align-items:center; gap:12px; padding:10px 14px; border-top:1px solid var(--line); background:#fafaf8; }
+  .controls button { padding:6px 14px; font-size:14px; border:1px solid var(--line); background:var(--card); border-radius:4px; cursor:pointer; }
+  .controls button:hover { background:var(--bg); }
+  .controls .time { font-variant-numeric: tabular-nums; font-size:13px; color:var(--muted); min-width:110px; }
+  .controls .bar { flex:1; height:6px; background:var(--line); border-radius:3px; position:relative; cursor:pointer; }
+  .controls .bar .fill { position:absolute; left:0; top:0; bottom:0; background:var(--accent); border-radius:3px; }
+  .controls select { padding:4px 6px; font-size:13px; border:1px solid var(--line); border-radius:4px; background:var(--card); }
 </style>
 </head>
 <body>
@@ -31,21 +40,24 @@
 </div>
 
 <script type="module">
-import rrwebPlayer from 'https://cdn.rrweb.com/rrweb-player/current/rrweb-player.js';
-import { unpack } from 'https://cdn.rrweb.com/all/current/all.js';
+import { Replayer, unpack } from 'https://cdn.rrweb.com/all/current/all.js';
 
 const listEl = document.getElementById('list');
 const mainEl = document.getElementById('main');
-let player = null;
+let replayer = null;
+let uiTimer = null;
 
-function fmtDate(ms) {
-  return new Date(ms).toLocaleString('sk-SK');
-}
+function fmtDate(ms) { return new Date(ms).toLocaleString('sk-SK'); }
 function fmtDur(ms) {
   const s = Math.round(ms / 1000);
   if (s < 60) return s + 's';
   const m = Math.floor(s / 60);
   return m + 'm ' + (s % 60) + 's';
+}
+function fmtTime(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return (m < 10 ? '0' : '') + m + ':' + ((s % 60) < 10 ? '0' : '') + (s % 60);
 }
 
 async function loadList() {
@@ -73,7 +85,7 @@ function showError(msg, detail) {
     (detail ? '<pre style="background:#fdd;padding:10px;overflow:auto;font-size:12px">' + String(detail).replace(/[<>]/g,'') + '</pre>' : '') + '</div>';
 }
 
-// Debug bar — viditeľné počítadlá & posledný stav, bez nutnosti otvárať console
+// Debug bar — vidno stav bez otvárania Console
 const dbgBar = document.createElement('div');
 dbgBar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#222;color:#0f0;font:12px monospace;padding:6px 12px;z-index:9999;white-space:pre;overflow:auto;max-height:120px';
 dbgBar.textContent = '[viewer] pripravený';
@@ -83,25 +95,25 @@ function dbg(msg) {
   dbgBar.textContent = '[' + ts + '] ' + msg + '\n' + dbgBar.textContent.slice(0, 800);
   console.log('[viewer]', msg);
 }
+window.addEventListener('error', function (e) { dbg('WINDOW ERROR: ' + (e.message || 'unknown')); });
+window.addEventListener('unhandledrejection', function (e) { dbg('PROMISE REJECT: ' + (e.reason && (e.reason.message || e.reason.toString()))); });
 
-// Zachyť globálne uncaught errors
-window.addEventListener('error', function (e) {
-  dbg('WINDOW ERROR: ' + (e.message || 'unknown') + ' @ ' + (e.filename || '?') + ':' + (e.lineno || '?'));
-});
-window.addEventListener('unhandledrejection', function (e) {
-  dbg('PROMISE REJECT: ' + (e.reason && (e.reason.message || e.reason.toString())));
-});
+dbg('modules: Replayer=' + typeof Replayer + ' unpack=' + typeof unpack);
 
-dbg('modules: rrwebPlayer=' + typeof rrwebPlayer + ' unpack=' + typeof unpack);
+function tearDown() {
+  if (uiTimer) { clearInterval(uiTimer); uiTimer = null; }
+  if (replayer) { try { replayer.pause(); replayer.destroy && replayer.destroy(); } catch (e) {} replayer = null; }
+}
 
 async function play(site, id) {
+  tearDown();
   mainEl.innerHTML = '<div class="empty">Načítavam…</div>';
+
   let raw;
   try {
     raw = await fetch('/api/sessions/' + encodeURIComponent(site) + '/' + encodeURIComponent(id)).then(r => r.json());
   } catch (e) { showError('fetch zlyhal', e.message); return; }
 
-  // Rozbaliť eventy jeden po druhom, chyby zobraz na strane
   const events = [];
   const unpackErrors = [];
   const typeCounts = {};
@@ -114,35 +126,105 @@ async function play(site, id) {
       unpackErrors.push({ i, msg: e.message });
     }
   }
-  dbg('session ' + id + ' → raw=' + raw.events.length + ' ok=' + events.length + ' types=' + JSON.stringify(typeCounts) + ' errs=' + unpackErrors.length);
-  if (unpackErrors.length) dbg('first unpack error: ' + unpackErrors[0].msg);
+  dbg('session ' + id.slice(0, 12) + '… raw=' + raw.events.length + ' ok=' + events.length + ' types=' + JSON.stringify(typeCounts));
 
   if (events.length < 2) { showError('Relácia je príliš krátka (' + events.length + ' použiteľných eventov).', JSON.stringify(typeCounts)); return; }
   if (!typeCounts[2]) { showError('Chýba FullSnapshot event (type=2). Player nemá odkiaľ začať.', JSON.stringify(typeCounts)); return; }
 
+  // Zostav player kontajner + stage + controls
   mainEl.innerHTML = '';
-  const box = document.createElement('div');
-  box.style.cssText = 'min-width:400px;min-height:400px;border:2px dashed #ccc';
-  mainEl.appendChild(box);
-  if (player) { try { player.$destroy && player.$destroy(); } catch (e) {} }
+  const player = document.createElement('div');
+  player.className = 'player';
+  player.style.width = Math.min(1000, mainEl.clientWidth - 40) + 'px';
+
+  const stage = document.createElement('div');
+  stage.className = 'stage';
+  stage.style.width = Math.min(1000, mainEl.clientWidth - 40) + 'px';
+  stage.style.height = '540px';
+  player.appendChild(stage);
+
+  const controls = document.createElement('div');
+  controls.className = 'controls';
+  controls.innerHTML =
+    '<button id="pp">▶ Play</button>' +
+    '<span class="time" id="tm">00:00 / 00:00</span>' +
+    '<div class="bar" id="bar"><div class="fill" id="fill"></div></div>' +
+    '<select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select>';
+  player.appendChild(controls);
+  mainEl.appendChild(player);
+
   try {
-    dbg('creating player w=' + Math.min(1000, mainEl.clientWidth - 40) + ' h=540');
-    player = new rrwebPlayer({
-      target: box,
-      props: {
-        events: events,
-        width: Math.min(1000, mainEl.clientWidth - 40),
-        height: 540,
-        autoPlay: false,
-        showController: true
-      }
+    dbg('creating Replayer, events=' + events.length);
+    replayer = new Replayer(events, {
+      root: stage,
+      skipInactive: true,
+      showWarning: false,
+      showDebug: false
     });
-    dbg('player created OK, box children=' + box.children.length);
-    setTimeout(function () { dbg('after 1s: box children=' + box.children.length + ' innerHTML.length=' + box.innerHTML.length); }, 1000);
+    dbg('Replayer created, stage children=' + stage.children.length);
   } catch (e) {
-    dbg('PLAYER THREW: ' + (e.message || e));
-    showError('rrweb-player padol pri inicializácii.', e.stack || e.message);
+    dbg('REPLAYER THREW: ' + (e.message || e));
+    showError('rrweb Replayer padol pri inicializácii.', e.stack || e.message);
+    return;
   }
+
+  // Meta + UI wiring
+  const meta = replayer.getMetaData();
+  const totalMs = meta.totalTime;
+  dbg('meta totalMs=' + totalMs + ' startTs=' + meta.startTime + ' endTs=' + meta.endTime);
+
+  const ppBtn = controls.querySelector('#pp');
+  const tmEl = controls.querySelector('#tm');
+  const barEl = controls.querySelector('#bar');
+  const fillEl = controls.querySelector('#fill');
+  const speedEl = controls.querySelector('#speed');
+
+  let playing = false;
+  let currentMs = 0;
+
+  function updateUi() {
+    tmEl.textContent = fmtTime(currentMs) + ' / ' + fmtTime(totalMs);
+    fillEl.style.width = (Math.min(1, currentMs / totalMs) * 100) + '%';
+  }
+  updateUi();
+
+  function startTick() {
+    if (uiTimer) clearInterval(uiTimer);
+    uiTimer = setInterval(function () {
+      if (!replayer || !playing) return;
+      currentMs = replayer.getCurrentTime();
+      updateUi();
+      if (currentMs >= totalMs) { playing = false; ppBtn.textContent = '▶ Play'; }
+    }, 100);
+  }
+
+  ppBtn.onclick = function () {
+    if (!replayer) return;
+    if (playing) {
+      replayer.pause();
+      playing = false;
+      ppBtn.textContent = '▶ Play';
+    } else {
+      // ak sme na konci, reštartuj od 0
+      if (currentMs >= totalMs - 100) { currentMs = 0; }
+      replayer.play(currentMs);
+      playing = true;
+      ppBtn.textContent = '⏸ Pause';
+      startTick();
+    }
+  };
+
+  barEl.onclick = function (e) {
+    const rect = barEl.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    currentMs = pct * totalMs;
+    if (playing) replayer.play(currentMs); else replayer.pause(currentMs);
+    updateUi();
+  };
+
+  speedEl.onchange = function () {
+    if (replayer) replayer.setConfig({ speed: parseFloat(speedEl.value) });
+  };
 }
 
 loadList();
