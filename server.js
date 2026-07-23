@@ -78,15 +78,17 @@ addCol('language', 'TEXT');
 addCol('label', 'TEXT');
 addCol('has_snapshot', 'INTEGER DEFAULT 0');
 
-// One-time backfill has_snapshot pre existujúce sessions cez size heuristiku
-// (packed FullSnapshot je typicky > 15 KB, Meta ~200 B). Beží iba raz keď je stĺpec
-// nový alebo väčšinou 0 — bezpečné aj opakovane.
+// Backfill has_snapshot pre existujúce sessions. EXISTS pattern je robustnejší
+// ako tuple-IN v SQLite. Threshold 5000 chytí aj FullSnapshoty malých stránok
+// (Meta ~100B, Incrementals typicky <5KB). Beží bezpečne aj opakovane —
+// touchuje iba rows kde has_snapshot=0.
 try {
   const backfilled = db.prepare(`
     UPDATE sessions SET has_snapshot=1
     WHERE has_snapshot=0
-      AND (site, id) IN (
-        SELECT site, sid FROM events WHERE LENGTH(data) > 15000 GROUP BY site, sid
+      AND EXISTS (
+        SELECT 1 FROM events e
+        WHERE e.site=sessions.site AND e.sid=sessions.id AND LENGTH(e.data) > 5000
       )`).run();
   if (backfilled.changes > 0) console.log('[backfill] has_snapshot set on ' + backfilled.changes + ' legacy sessions');
 } catch (e) { console.warn('[backfill] failed:', e.message); }
@@ -187,17 +189,19 @@ app.post('/i/:site', rateLimit, express.text({ type: function () { return true; 
   var language = (langHdr.split(',')[0].split(';')[0].trim() || null);
   var base = qMaxSeq.get(site, sid).m + 1;
 
-  // Detekcia FullSnapshot/Meta v tejto dávke — decompress len prvý event (typicky <500B).
-  // rrweb emituje Meta (type=4) ako prvý event pri record() štarte, FullSnapshot (type=2)
-  // hneď za ním. Ak dávka začína Meta alebo FullSnapshot, session má baseline pre playback.
+  // Detekcia FullSnapshot/Meta v tejto dávke — scan prvých max 5 eventov (typicky Meta+FS
+  // v prvej dávke, Incrementals v ďalších). Cheap: 5 malých inflate-ov per POST.
+  // Meta ~100B packed, FullSnapshot 5–500KB, Incrementals typicky <5KB. Zastavíme sa
+  // hneď ako nájdeme type ∈ {2, 4}.
   var hasSnapshotInBatch = 0;
-  try {
-    if (typeof events[0] === 'string') {
-      var firstBuf = Buffer.from(events[0], 'binary');
-      var firstObj = JSON.parse(zlib.inflateSync(firstBuf).toString('utf8'));
-      if (firstObj.type === 2 || firstObj.type === 4) hasSnapshotInBatch = 1;
-    }
-  } catch (e) { /* neinjectuj do session, nechaj MAX() logiku spraviť svoje */ }
+  for (var k = 0; k < Math.min(5, events.length); k++) {
+    try {
+      if (typeof events[k] !== 'string') continue;
+      var evBuf = Buffer.from(events[k], 'binary');
+      var evObj = JSON.parse(zlib.inflateSync(evBuf).toString('utf8'));
+      if (evObj.type === 2 || evObj.type === 4) { hasSnapshotInBatch = 1; break; }
+    } catch (err) { /* skip corrupted event */ }
+  }
 
   var tx = db.transaction(function () {
     events.forEach(function (e, i) {

@@ -32,21 +32,12 @@
   .item .m { font-size:12px; color:var(--muted); margin-top:3px; padding-right:26px; }
   .item .site-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; vertical-align:middle; }
 
-  /* Label pill — pravý horný roh, klik otvorí picker */
-  .label-wrap { position:absolute; top:8px; right:10px; }
-  .label-pill { width:14px; height:14px; border-radius:50%; border:1.5px solid var(--muted); background:transparent; cursor:pointer; padding:0; display:block; }
-  .label-pill.interesting { background:#e6b800; border-color:#b38f00; }
-  .label-pill.reviewed    { background:#4caf50; border-color:#2e7031; }
-  .label-pill.issue       { background:#e53935; border-color:#a02724; }
-  .label-pill.test        { background:#9e9e9e; border-color:#616161; }
-  .label-picker { display:none; position:absolute; top:22px; right:0; background:var(--card); border:1px solid var(--line); border-radius:4px; padding:4px; box-shadow:0 2px 8px rgba(0,0,0,0.15); z-index:3; }
-  .label-wrap.open .label-picker { display:flex; gap:3px; }
-  .label-picker button { width:22px; height:22px; border-radius:50%; border:1.5px solid var(--muted); background:transparent; cursor:pointer; padding:0; }
-  .label-picker button.interesting { background:#e6b800; border-color:#b38f00; }
-  .label-picker button.reviewed    { background:#4caf50; border-color:#2e7031; }
-  .label-picker button.issue       { background:#e53935; border-color:#a02724; }
-  .label-picker button.test        { background:#9e9e9e; border-color:#616161; }
-  .label-picker button:hover { transform:scale(1.15); }
+  /* Label dropdown — natívny <select> v pravom hornom rohu */
+  .label-select { position:absolute; top:6px; right:8px; font-size:11px; padding:2px 4px; border:1px solid var(--line); border-radius:3px; background:var(--card); cursor:pointer; max-width:110px; }
+  .label-select.interesting { background:#fff8dd; border-color:#e6b800; color:#8a5b1e; }
+  .label-select.reviewed    { background:#e8f5e9; border-color:#4caf50; color:#2e7031; }
+  .label-select.issue       { background:#fbdcdc; border-color:#e53935; color:#8a1e1e; }
+  .label-select.test        { background:#f0f0f0; border-color:#9e9e9e; color:#616161; }
 
   /* Delete button v detail paneli */
   .detail .delete-btn { display:inline-block; margin-top:10px; padding:5px 10px; font-size:12px; background:#fbdcdc; border:1px solid #e6a3a3; color:#8a1e1e; border-radius:3px; cursor:pointer; }
@@ -415,23 +406,20 @@ async function deleteSession(site, id) {
 }
 
 function renderItem(s) {
-  const pillClass = s.label ? ('label-pill ' + s.label) : 'label-pill';
-  const pickerBtns = LABELS.map(function (l) {
-    return '<button class="' + l + '" data-label="' + l + '" title="' + l + '"></button>';
-  }).join('') + '<button data-label="" title="' + t('removeLabel') + '" style="background:transparent;border-style:dashed"></button>';
+  const label = s.label || '';
+  const selClass = 'label-select' + (label ? ' ' + label : '');
+  const opts = '<option value="">—</option>' +
+    LABELS.map(function (l) { return '<option value="' + l + '"' + (label === l ? ' selected' : '') + '>' + l + '</option>'; }).join('');
 
   const div = document.createElement('div');
   div.className = 'item';
   div.dataset.site = s.site;
   div.dataset.id = s.id;
-  div.dataset.label = s.label || '';
+  div.dataset.label = label;
   div.dataset.hasSnapshot = s.has_snapshot ? '1' : '0';
   div.dataset.url = s.url || '';
   div.innerHTML =
-    '<div class="label-wrap">' +
-      '<button class="' + pillClass + '" data-toggle-picker title="' + esc(s.label || t('setLabel')) + '"></button>' +
-      '<div class="label-picker">' + pickerBtns + '</div>' +
-    '</div>' +
+    '<select class="' + selClass + '" data-label-select title="' + t('setLabel') + '">' + opts + '</select>' +
     '<div class="u">' + esc(s.url || '(bez URL)') + '</div>' +
     '<div class="m">' +
       '<span class="site-dot" style="' + siteDotStyle(s.site) + '"></span>' +
@@ -456,15 +444,17 @@ async function loadList() {
 
   rows.forEach(function (s) {
     const div = renderItem(s);
-    div.onclick = async function () {
+    div.onclick = async function (e) {
+      // Neexpandovať pri kliku na interactive elementy (select, delete, copy)
+      if (e && e.target && e.target.closest && e.target.closest('[data-label-select], [data-delete], .copy, .delete-btn')) return;
       document.querySelectorAll('.item').forEach(function (x) { x.classList.remove('active'); });
       div.classList.add('active');
       const slot = div.querySelector('.detail-slot');
       slot.innerHTML = '<div class="detail" style="color:var(--muted)">' + t('loadingMeta') + '</div>';
       loadSummary(s.site, s.id).then(function (summary) {
         slot.innerHTML = renderDetail(s, summary);
-      }).catch(function (e) {
-        slot.innerHTML = '<div class="detail" style="color:#8a1e1e">' + t('metaFetchFailed') + esc(e) + '</div>';
+      }).catch(function (e2) {
+        slot.innerHTML = '<div class="detail" style="color:#8a1e1e">' + t('metaFetchFailed') + esc(e2) + '</div>';
       });
       play(s.site, s.id);
     };
@@ -490,9 +480,12 @@ document.getElementById('f-search').addEventListener('input', function () {
   searchTimer = setTimeout(applyFilters, 200);
 });
 
-// Delegated click: label picker, copy, delete
+// Delegated click: copy + delete. Label je change event nižšie.
 listEl.addEventListener('click', function (e) {
   const tgt = e.target;
+
+  // Klik na select nesmie triggerovať item.onclick (bubble stop)
+  if (tgt.closest && tgt.closest('[data-label-select]')) { e.stopPropagation(); return; }
 
   // Copy session ID
   const copy = tgt.closest && tgt.closest('.copy');
@@ -502,34 +495,6 @@ listEl.addEventListener('click', function (e) {
     const orig = copy.textContent;
     copy.textContent = t('copied');
     setTimeout(function () { copy.textContent = orig; }, 1000);
-    return;
-  }
-
-  // Toggle label picker (klik na pill)
-  const pillToggle = tgt.closest && tgt.closest('[data-toggle-picker]');
-  if (pillToggle) {
-    e.stopPropagation();
-    const wrap = pillToggle.closest('.label-wrap');
-    document.querySelectorAll('.label-wrap.open').forEach(function (w) { if (w !== wrap) w.classList.remove('open'); });
-    wrap.classList.toggle('open');
-    return;
-  }
-
-  // Výber labelu z pickera
-  const pick = tgt.closest && tgt.closest('.label-picker button');
-  if (pick) {
-    e.stopPropagation();
-    const item = pick.closest('.item');
-    const wrap = pick.closest('.label-wrap');
-    const site = item.dataset.site, id = item.dataset.id;
-    const label = pick.dataset.label;
-    const pill = wrap.querySelector('[data-toggle-picker]');
-    pill.className = 'label-pill' + (label ? ' ' + label : '');
-    pill.title = label || t('setLabel');
-    item.dataset.label = label;
-    wrap.classList.remove('open');
-    patchLabel(site, id, label).catch(function (err) { console.error('label patch failed', err); alert(t('labelUpdateFailed') + err.message); });
-    applyFilters();
     return;
   }
 
@@ -555,11 +520,21 @@ listEl.addEventListener('click', function (e) {
   }
 });
 
-// Zavri picker pri outside click
-document.addEventListener('click', function (e) {
-  if (!e.target.closest || !e.target.closest('.label-wrap')) {
-    document.querySelectorAll('.label-wrap.open').forEach(function (w) { w.classList.remove('open'); });
-  }
+// Delegated change: label select
+listEl.addEventListener('change', function (e) {
+  const sel = e.target && e.target.closest && e.target.closest('[data-label-select]');
+  if (!sel) return;
+  const item = sel.closest('.item');
+  if (!item) return;
+  const site = item.dataset.site, id = item.dataset.id;
+  const label = sel.value;
+  sel.className = 'label-select' + (label ? ' ' + label : '');
+  item.dataset.label = label;
+  patchLabel(site, id, label).catch(function (err) {
+    console.error('label patch failed', err);
+    alert(t('labelUpdateFailed') + err.message);
+  });
+  applyFilters();
 });
 
 function showError(msg, detail) {
